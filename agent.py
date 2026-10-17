@@ -239,7 +239,8 @@ class Alert:
 
 
 def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
-                 results: dict[str, SimulationResult] | None = None) -> list[Alert]:
+                 results: dict[str, SimulationResult] | None = None,
+                 customer_payment_day: int | None = None) -> list[Alert]:
     alerts: list[Alert] = []
     if as_is.first_breach_day is not None:
         alerts.append(Alert(
@@ -261,6 +262,8 @@ def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
                 f"before {i.label} ({i.amount:,.0f}) arrives on day {i.day}.",
                 "warning"))
             break
+    if customer_payment_day is not None:
+        alerts.extend(_overdue_alerts(case, as_is, winner, customer_payment_day))
     violated = [r for r in results.values() if r.violations] if results else []
     if violated:
         reasons = sorted({v for r in violated for v in r.violations})
@@ -281,6 +284,32 @@ def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
             f"stress: breach on day {winner.stress_fail_day}.",
             "warning"))
     return alerts
+
+
+def _breach_text(r: SimulationResult) -> str:
+    return f"day {r.first_breach_day}" if r.first_breach_day is not None else "no breach"
+
+
+def _overdue_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
+                    pay_day: int) -> list[Alert]:
+    """Overdue receivable: already past due, and what happens if it never arrives."""
+    out: list[Alert] = []
+    for m in engine.overdue_receivables(case):
+        lost = engine.without_movement(case, m)
+        as_is2 = engine.simulate(lost, as_is.plan, pay_day)
+        win2 = engine.simulate(lost, winner.plan, pay_day)
+        changed = (as_is2.first_breach_day != as_is.first_breach_day
+                   or win2.first_breach_day != winner.first_breach_day)
+        out.append(Alert(
+            "overdue_receivable", m.due_day,
+            f"{m.label} ({m.counterparty}, {m.amount:,.0f}) is {-m.due_day} day(s) overdue "
+            f"and still assumed to arrive on day {m.day}. If it never arrives: accept "
+            f"as-is first breach {_breach_text(as_is)} → {_breach_text(as_is2)}; "
+            f"recommended plan '{winner.plan.label}' {_breach_text(winner)} → "
+            f"{_breach_text(win2)} (low {win2.min_balance:,.0f} on day {win2.min_day}).",
+            "critical" if win2.first_breach_day is not None and winner.reserve_ok
+            else ("warning" if changed else "info")))
+    return out
 
 
 # ------------------------------------------------------- stages A-E, memo
@@ -370,7 +399,7 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
                 f"first flip at day {flip_day if flip_day is not None else '-'}."))
 
     min_advance = engine.minimum_advance(case, customer_payment_day, STRESS_DELAYS)
-    alerts = raise_alerts(case, as_is, winner, results)
+    alerts = raise_alerts(case, as_is, winner, results, customer_payment_day)
     draft = draft_message(winner, case, customer_payment_day, min_advance)
 
     return AgentRun(

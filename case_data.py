@@ -67,7 +67,8 @@ CASE = Case(
     base_movements=(
         Movement(10, D("-3000"), "Supplier bill (existing stock)", "obligation", "PackRight Co."),
         Movement(15, D("-7000"), "Payroll", "payroll", "Staff"),
-        Movement(25, D("4000"), "Receivable collection (invoice 1187)", "receivable", "Northlake Stores"),
+        Movement(25, D("4000"), "Receivable collection (invoice 1187)", "receivable",
+                 "Northlake Stores", due_day=-5),  # 5 days overdue today; promised for day 25
         Movement(40, D("-3000"), "Supplier bill (existing stock)", "obligation", "PackRight Co."),
         Movement(45, D("-7000"), "Payroll", "payroll", "Staff"),
     ),

@@ -79,3 +79,21 @@ def test_violations_raise_alert_and_winner_is_decline():
     run = agent.run_agent(replace(CASE, delivery_day=35), 60, "maximize_margin", False)
     assert run.winner.plan.id == "decline"
     assert any(a.rule == "constraint_violation" for a in run.alerts)
+
+
+# ------------------------------------------------------ overdue receivable
+
+
+def test_overdue_receivable_alert_shows_breach_effect():
+    import agent
+    run = agent.run_agent(CASE, 60, "maximize_margin", False)
+    assert run.winner.plan.id == "adv50_ext0_nofin"
+    alert = next(a for a in run.alerts if a.rule == "overdue_receivable")
+    assert "5 day(s) overdue" in alert.message
+    # By hand, 50% advance without the 4,000 receivable: d0 30,000-12,000+15,000 = 33,000;
+    # d10 30,000; d15 23,000; d20 18,000; d25 18,000 (no receipt); d30 16,500;
+    # d40 13,500; d45 6,500 < 8,000 reserve -> first breach day 45.
+    assert "no breach → day 45" in alert.message
+    assert alert.severity == "critical"
+    # As-is already breaches on day 20 (before day 25), so that date is unchanged.
+    assert "as-is first breach day 20 → day 20" in alert.message

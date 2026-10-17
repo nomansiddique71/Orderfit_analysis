@@ -33,6 +33,7 @@ class Movement:
     counterparty: str = ""
     certain: bool = True
     deferrable_to: int | None = None  # target day if the supplier grants an extension
+    due_day: int | None = None  # contractual due day (receivables); < 0 = already overdue today
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,20 @@ class Case:
 
 
 # ---------------------------------------------------------------- simulation
+
+
+def overdue_receivables(case: Case) -> list[Movement]:
+    """Receivables whose due day has passed (day 0 is today) but are still expected."""
+    return [m for m in case.base_movements
+            if m.amount > 0 and m.due_day is not None and m.due_day < 0]
+
+
+def without_movement(case: Case, movement: Movement) -> Case:
+    """The same case with one existing movement removed (e.g. a receivable never paid)."""
+    from dataclasses import replace
+
+    return replace(case, base_movements=tuple(m for m in case.base_movements
+                                              if m is not movement))
 
 
 def constraint_violations(case: Case, plan: Plan) -> list[str]:
