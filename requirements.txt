@@ -4,6 +4,11 @@ streamlit==1.66.0
 pandas==3.0.6
 altair==6.3.0
 
+# SolvOrder API server
+fastapi==0.143.3
+uvicorn==0.54.0
+python-multipart==0.0.32
+
 # Gemini (Vertex AI or API key). The app degrades to templates without it.
 google-genai==2.31.0
 pydantic==2.14.1

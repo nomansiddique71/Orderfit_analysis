@@ -230,3 +230,16 @@ def test_no_plan_survives_names_the_hard_constraint():
 def test_default_acme_has_surviving_plans():
     import agent
     assert not agent.run_agent(CASE, 60, "maximize_margin", False).no_plan_survives
+
+
+# ------------------------------------------------------------ funding gap
+
+
+def test_funding_gap_as_is_hand_checked():
+    # As-is: d20 3,000 < 8,000 (first breach); d25 7,000; d30 5,500; d40 2,500;
+    # d45 -4,500; d60 the 30,000 arrives *during* the day (same-day rule), so the
+    # start-of-day balance is still -4,500. Below the reserve from day 20 through
+    # day 60 = 41 days. Need: 8,000 - (-4,500) = 12,500.
+    gap = engine.funding_gap(engine.simulate(CASE, _plan("accept-as-is"), 60), CASE.reserve)
+    assert (gap.amount, gap.from_day, gap.until_day, gap.days) == (D("12500"), 20, 60, 41)
+    assert engine.funding_gap(engine.simulate(CASE, _plan("decline"), 60), CASE.reserve).days == 0

@@ -371,6 +371,39 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
     )
 
 
+# ------------------------------------------------------- funding gap (5.2)
+
+
+@dataclass(frozen=True)
+class FundingGap:
+    """How much extra cash a plan needs to keep the reserve, and for how long."""
+
+    amount: Decimal  # reserve - lowest intra-day balance (0 if never below)
+    from_day: int | None  # first day below the reserve
+    until_day: int | None  # last day still below the reserve (inclusive)
+
+    @property
+    def days(self) -> int:
+        return 0 if self.from_day is None else self.until_day - self.from_day + 1
+
+
+def funding_gap(result: SimulationResult, reserve: Decimal) -> FundingGap:
+    """Balances only change on event days, so the gap runs from the first event
+    day below the reserve until the day before the next event day that is back
+    at or above it (or the last event day if it never recovers)."""
+    days = sorted(result.low_path)
+    below = [d for d in days if result.low_path[d] < reserve]
+    if not below:
+        return FundingGap(ZERO, None, None)
+    first = below[0]
+    later_ok = [d for d in days if d > below[-1] and result.path[d] >= reserve]
+    # the balance stays as it was at the end of the last breach day until the next event
+    end_of_last = result.path[below[-1]]
+    until = (later_ok[0] - 1 if end_of_last < reserve and later_ok else
+             below[-1] if end_of_last >= reserve else days[-1])
+    return FundingGap(reserve - result.min_balance, first, until)
+
+
 # ------------------------------------------------------------- scenarios
 
 ORDER_KINDS = {"order_cost", "order_revenue", "advance", "financing_draw", "financing_repay"}
