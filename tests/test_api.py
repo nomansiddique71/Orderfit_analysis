@@ -150,14 +150,3 @@ def test_unknown_session_and_bad_input():
     _sample(sid, "clean")
     assert client.post("/api/analyze", json={"session_id": sid, "priority": "x"}).status_code == 400
     assert client.post("/api/analyze", json={"session_id": sid, "stress_delay": 7}).status_code == 400
-
-
-def test_download_all_samples_zip():
-    import io
-    import zipfile
-
-    r = client.get("/api/samples/all.zip")
-    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
-    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-    assert len(names) == 11 and all(n.endswith(".pdf") for n in names)
-    assert "SolvOrder-samples/fraud/supplier_invoice.pdf" in names

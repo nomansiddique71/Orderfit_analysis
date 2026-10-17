@@ -217,21 +217,6 @@ def samples():
     return _packs()
 
 
-@app.get("/api/samples/all.zip")
-def samples_zip():
-    """Every sample PDF in one ZIP (one folder per pack), built in memory."""
-    import io
-    import zipfile
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in _packs():
-            for name in p["files"]:  # whitelisted names from packs.json only
-                z.write(SAMPLES / p["id"] / name, f"SolvOrder-samples/{p['id']}/{name}")
-    return Response(buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": "attachment; filename=SolvOrder-sample-documents.zip"})
-
-
 @app.get("/api/samples/{pack}/{filename}")
 def sample_file(pack: str, filename: str):
     meta = next((p for p in _packs() if p["id"] == pack), None)
