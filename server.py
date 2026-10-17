@@ -83,7 +83,9 @@ class Session:
     sample_id: str | None = None
     resolved: dict = field(default_factory=dict)  # flag code -> owner note (clears the flag)
     decisions: dict = field(default_factory=dict)  # flag code -> {action, label, note}
-    messages: dict = field(default_factory=dict)  # approval id -> message sent on approval
+    messages: dict = field(default_factory=dict)  # approval id -> messages sent on approval
+    lender: list = field(default_factory=list)  # loan acceptances in the mock lender portal
+    bank_approval: str = ""  # approval id behind the current simulated ledger
     last: dict = field(default_factory=dict)  # run, case, pay_day, versions
     ai_cache: dict = field(default_factory=dict)
 
@@ -859,11 +861,15 @@ def execute(req: SessionReq):
     r = run.results[a.plan_id]
     msgs = s.messages.get(a.approval_id, [])
     s.bank = SimulatedBank()  # each execution books into a fresh simulated ledger
+    portal = MockLenderPortal({o.id: o for o in last["case"].financing_offers})
     rep = execute_plan(run, r, "\n\n---\n\n".join(m["body"] for m in msgs) or _draft_for(s, r.plan.id),
-                       a, s.approvals, s.log, s.gate, s.bank, s.outbox,
-                       MockLenderPortal({o.id: o for o in last["case"].financing_offers}),
+                       a, s.approvals, s.log, s.gate, s.bank, s.outbox, portal,
                        blocks=run.execution_blocks,
                        message_already_sent=bool(msgs) and all(m["sent"] for m in msgs))
+    s.lender += [{**x, "approval_id": a.approval_id,
+                  "lender": next((o.lender for o in last["case"].financing_offers
+                                  if o.id == x["offer"]), "")} for x in portal.accepted]
+    s.bank_approval = a.approval_id if s.bank.booked else ""
     s.executed = {"ok": rep.ok, "steps": rep.steps, "consistency": rep.consistency,
                   "override": rep.override,
                   "ledger": s.bank.booked, "outbox": s.outbox.sent[-1:] if rep.ok else []}
@@ -940,10 +946,60 @@ def polish(req: PolishReq):
     return {"text": text, "source": mode, "note": note, "plan_id": pid, "index": req.index}
 
 
+# Plain-language description of each tool, for the operation log.
+TOOL_TEXT = {
+    "extract_fields": "Documents read", "manual_entry": "Order typed in by you",
+    "set_profile": "Business details saved", "resolve_flag": "Your decision on a check",
+    "simulate+rank_plans": "Cash simulated day by day and plans ranked",
+    "request_approval": "You approved a plan", "outbox.send": "Message posted to the mock outbox",
+    "lender.accept": "Loan accepted in the mock lender portal",
+    "bank.post": "Payments booked in the simulated bank", "consistency_check":
+    "Simulated bank compared with the engine's prediction", "execute_plan": "Execution attempt",
+    "gemini.explain": "Gemini explained the decision", "gemini.ask": "Gemini answered a question",
+    "gemini.polish": "Gemini reworded a message (numbers checked)",
+    "gemini.what_else_needed": "Gemini chose the intake questions",
+    "smtp.send": "Tried to send a REAL email", "bank.live_transfer": "Tried a LIVE bank transfer",
+    "lender.create_terms": "Tried to invent loan terms", "documents.edit": "Tried to edit a source document",
+}
+OWNER_TOOLS = {"manual_entry", "set_profile", "resolve_flag", "request_approval"}
+
+
+def _where(e: dict) -> str:
+    """Which part of SolvOrder ran this step: sandbox | gemini | engine | owner | blocked."""
+    if e["result"].startswith("BLOCKED") or e["tier"] == "T3":
+        return "blocked"
+    if e["tool"].startswith("gemini.") or (e["tool"] == "extract_fields" and "gemini" in e["result"]):
+        return "gemini"
+    if e["tier"] == "T2":
+        return "sandbox"
+    if e["tool"] in OWNER_TOOLS:
+        return "owner"
+    return "engine"
+
+
 @app.get("/api/log")
 def get_log(session_id: str):
     s = _session(session_id)
-    return {"entries": s.log.as_dicts()}
+    return {"entries": [{**e, "where": _where(e), "what": TOOL_TEXT.get(e["tool"], e["tool"])}
+                        for e in s.log.as_dicts()]}
+
+
+@app.get("/api/sandbox")
+def sandbox_view(session_id: str):
+    """Everything the sandbox holds for this session: mock outbox, simulated bank
+    ledger (with running balance) and mock lender portal. Nothing here is real."""
+    s = _session(session_id)
+    rows, running = [], None
+    if s.bank.booked and s.last:
+        running = s.last["case"].opening_cash
+        for m in sorted(s.bank.booked, key=lambda m: (m["day"], Decimal(str(m["amount"])) >= 0)):
+            running += Decimal(str(m["amount"]))
+            rows.append({"day": m["day"], "label": m["label"], "amount": num(Decimal(str(m["amount"]))),
+                         "balance": num(running)})
+    return {"outbox": list(reversed(s.outbox.sent)),
+            "bank": {"approval_id": s.bank_approval, "opening": num(s.last["case"].opening_cash)
+                     if s.last and rows else None, "rows": rows},
+            "lender": list(reversed(s.lender))}
 
 
 @app.get("/api/log/export")

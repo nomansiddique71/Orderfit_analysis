@@ -127,9 +127,13 @@ class MockOutbox:
     def __init__(self) -> None:
         self.sent: list[dict] = []
 
-    def send(self, recipient: str, subject: str, body: str) -> None:
+    def send(self, recipient: str, subject: str, body: str, approval_id: str | None = None) -> None:
+        from datetime import datetime
+
         self.sent.append({"to": recipient, "subject": subject, "body": body,
-                          "status": "sent (mock -- nothing delivered)"})
+                          "status": "sent (mock -- nothing delivered)",
+                          "time": datetime.now().strftime("%H:%M:%S"),
+                          "approval_id": approval_id or ""})
 
 
 def send_on_approval(approval: Approval, approvals: dict[str, Approval], gate: PermissionGate,
@@ -143,7 +147,7 @@ def send_on_approval(approval: Approval, approvals: dict[str, Approval], gate: P
                                approval.approval_id, approvals, approval.plan_version)
     if not ok:
         return False, reason or "blocked"
-    outbox.send(recipient, subject, body)
+    outbox.send(recipient, subject, body, approval.approval_id)
     log.append("outbox.send", "T2", {"to": recipient, "len": len(body), "on": "approval"},
                approval.approval_id, "sent to mock outbox on approval (nothing delivered)" + tag)
     return True, "sent"
@@ -229,7 +233,7 @@ def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
                                    aid, approvals, pv)
         if not ok:
             return report(False, [f"outbox blocked: {reason}"])
-        outbox.send("counterparty@example.com", "OrderFit approved message", draft)
+        outbox.send("counterparty@example.com", "OrderFit approved message", draft, aid)
         log.append("outbox.send", "T2", {"to": "counterparty", "len": len(draft), "override": ovr},
                    aid, "sent (mock)" + tag)
         steps.append("Draft message posted to mock outbox.")

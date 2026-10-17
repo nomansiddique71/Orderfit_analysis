@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { Ban, CheckCircle2, Download, FileSignature, Landmark, Mail, Play, ScrollText, Send, ShieldCheck, Sparkles, XCircle } from "lucide-react";
-import { get, logUrl, post, type Analysis, type Approval, type Execution, type LogEntry } from "../api";
+import { Ban, CheckCircle2, FileSignature, Landmark, Mail, Play, Send, ShieldCheck, Sparkles, XCircle } from "lucide-react";
+import { get, post, type Analysis, type Approval, type Execution, type LogEntry } from "../api";
 import type { Choice } from "./OptionsStep";
+import { OperationLog, SandboxPanel, type SandboxTab } from "./Sandbox";
 import { money, planTitle } from "../format";
 import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle, Updating } from "./ui";
 
-const TIER: Record<string, string> = { T0: "bg-slate-200 text-slate-700", T1: "bg-sky-100 text-sky-800", T2: "bg-emerald-100 text-emerald-800", T3: "bg-rose-100 text-rose-800" };
 
 export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Promise<void>; choice: Choice }) {
   const cur = a.case.currency;
@@ -35,6 +35,9 @@ export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Pr
   const [t3, setT3] = useState<string | null>(null);
   const [t3Busy, setT3Busy] = useState<string | null>(null);
   const [logLoading, setLogLoading] = useState(false);
+  const [sbTab, setSbTab] = useState<SandboxTab>("outbox");
+  const [sbVersion, setSbVersion] = useState(0);
+  const openSandbox = (t: SandboxTab) => { setSbTab(t); document.getElementById("sandbox-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
 
   const feasible = a.plans.filter((p) => p.feasible && p.id !== "decline");
   const overridable = a.plans.filter((p) => !p.reserve_ok && p.violations.length === 0 && p.id !== "decline");
@@ -44,7 +47,7 @@ export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Pr
     try { setLog((await get<{ entries: LogEntry[] }>(`/api/log?session_id=${encodeURIComponent(sessionStorage.getItem("solvorder.sid") ?? "")}`)).entries); }
     finally { setLogLoading(false); }
   };
-  useEffect(() => { loadLog().catch(() => undefined); }, [approval, exec, t3]);
+  useEffect(() => { loadLog().catch(() => undefined); setSbVersion((n) => n + 1); }, [approval, exec, t3]);
 
   async function act<T>(label: string, fn: () => Promise<T>, then: (r: T) => void) {
     setBusy(label); setErr(null);
@@ -165,6 +168,8 @@ export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Pr
         </Card>
       )}
 
+      <SandboxPanel version={sbVersion} tab={sbTab} setTab={setSbTab} cur={cur} />
+
       <div className="grid gap-6 xl:grid-cols-[1fr_2fr]">
         <Card className="p-6">
           <SectionTitle icon={<ShieldCheck className="h-5 w-5" />} title="Try to make it misbehave" sub="These T3 actions have no code path. Every attempt is blocked and logged." />
@@ -178,25 +183,7 @@ export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Pr
           </div>
           {t3 && <div className="mt-3"><Callout tone="critical" title="Blocked">{t3}</Callout></div>}
         </Card>
-        <Card className="p-6">
-          <SectionTitle icon={<ScrollText className="h-5 w-5" />} title="Operation log" sub={logLoading ? "Refreshing…" : "Every tool call: time, tool, permission tier, input hash, approval ID, result."}
-            right={<button className="btn-secondary" onClick={async () => { window.location.href = await logUrl(); }}><Download className="h-4 w-4" /> Export JSON</button>} />
-          <div className="max-h-80 overflow-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-white text-left text-slate-500"><tr><th className="py-1">Time</th><th>Tier</th><th>Tool</th><th>Result</th></tr></thead>
-              <tbody>
-                {[...log].reverse().map((e, i) => (
-                  <tr key={i} className="border-t border-slate-100 align-top">
-                    <td className="py-1.5 font-mono text-slate-500">{e.time}</td>
-                    <td><span className={`chip ${TIER[e.tier] ?? ""}`}>{e.tier}</span></td>
-                    <td className="font-mono">{e.tool}<div className="text-slate-400">in:{e.input_hash}{e.approval_id && ` · ${e.approval_id}`}</div></td>
-                    <td className={e.result === "BLOCKED" ? "font-semibold text-rose-700" : ""}>{e.result}{e.blocked_reason && <div className="font-normal text-rose-600">{e.blocked_reason}</div>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <OperationLog log={log} loading={logLoading} onOpenSandbox={openSandbox} />
       </div>
     </div>
   );

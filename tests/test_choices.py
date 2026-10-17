@@ -86,3 +86,24 @@ def test_non_blocking_check_decision_is_recorded():
                                                 "action": opt["id"], "note": "ok"}).json()
     f = next(x for x in v["flags"] if x["code"] == flag["code"])
     assert f["resolved"] and f["decision"]["label"] == opt["label"]
+
+
+def test_log_says_where_each_step_ran_and_sandbox_shows_what_it_did():
+    sid = _session()
+    _sample(sid, "clean")
+    a = _analyze(sid)
+    appr = _approve(sid, a["verdict"]["winner"])
+    assert client.post("/api/execute", json={"session_id": sid}).json()["ok"]
+    client.post("/api/t3", json={"session_id": sid, "action": "live_transfer"})
+    entries = client.get(f"/api/log?session_id={sid}").json()["entries"]
+    where = {e["tool"]: e["where"] for e in entries}
+    assert where["outbox.send"] == where["bank.post"] == "sandbox"
+    assert where["request_approval"] == "owner" and where["simulate+rank_plans"] == "engine"
+    assert where["bank.live_transfer"] == "blocked"
+    assert all(e["what"] for e in entries)
+    sb = client.get(f"/api/sandbox?session_id={sid}").json()
+    assert sb["outbox"][0]["approval_id"] == appr["id"] and sb["outbox"][0]["to"].endswith(".example")
+    assert sb["bank"]["approval_id"] == appr["id"] and sb["bank"]["rows"]
+    winner = next(p for p in a["plans"] if p["id"] == a["verdict"]["winner"])
+    assert min(r["balance"] for r in sb["bank"]["rows"]) == winner["min_balance"]
+    assert sb["lender"] == []  # the 50% advance plan uses no loan

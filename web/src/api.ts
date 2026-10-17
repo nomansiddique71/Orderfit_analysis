@@ -90,7 +90,10 @@ export interface ScenarioResult {
   max_loss: number; money_at_risk: { day: number; amount: number }[];
 }
 export interface Pack { id: string; title: string; badge: string; subtitle: string; story: string; look_for: string[]; files: string[] }
-export interface LogEntry { time: string; tool: string; tier: string; input_hash: string; approval_id: string; result: string; blocked_reason: string }
+export interface LogEntry {
+  time: string; tool: string; tier: string; input_hash: string; approval_id: string; result: string; blocked_reason: string;
+  where: "sandbox" | "gemini" | "engine" | "owner" | "blocked"; what: string;
+}
 
 export class ApiError extends Error {
   status: number;
