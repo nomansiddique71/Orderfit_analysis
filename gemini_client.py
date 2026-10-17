@@ -527,9 +527,10 @@ def verify_draft(original: str, polished: str) -> tuple[bool, str]:
     return True, "All numbers match the engine's draft."
 
 
-def polish_draft(run) -> tuple[str, str, str]:
-    """Returns (text, mode, note). mode is 'gemini' or 'template'."""
-    original = run.draft_message
+def polish_draft(run, original: str | None = None) -> tuple[str, str, str]:
+    """Returns (text, mode, note). mode is 'gemini' or 'template'.
+    original: the engine draft to polish (default: the recommended plan's)."""
+    original = original if original is not None else run.draft_message
     if not gemini_available():
         return original, "template", "Gemini is not configured; showing the engine's draft."
     try:

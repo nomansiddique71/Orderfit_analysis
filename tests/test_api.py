@@ -77,7 +77,7 @@ def test_fraud_blocks_execution_until_resolved():
     ex = client.post("/api/execute", json={"session_id": sid}).json()
     assert not ex["ok"] and "fraud" in ex["steps"][0].lower()
     assert client.post("/api/flags/resolve", json={"session_id": sid, "code": "BANK_CHANGE",
-                                                   "note": "x"}).status_code == 422  # too short
+                                                   "note": "x"}).status_code == 400  # too short
     client.post("/api/flags/resolve", json={"session_id": sid, "code": "BANK_CHANGE",
                                             "note": "Called Brightwave on the number we had"})
     a = _analyze(sid)

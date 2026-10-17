@@ -41,7 +41,7 @@ import gemini_client
 import needs
 from docmodel import FACT_LABELS, SIMULATION_FACTS, Fact, Facts, SupplierPayment
 from sandbox import (OVERRIDE_TAG, Approval, MockLenderPortal, MockOutbox, OperationLog,
-                     PermissionGate, SimulatedBank, execute_plan)
+                     PermissionGate, SimulatedBank, execute_plan, send_on_approval)
 
 ROOT = Path(__file__).resolve().parent
 SAMPLES = ROOT / "samples"
@@ -81,7 +81,9 @@ class Session:
     # example: owner chose the example business | default: nobody gave business facts yet
     profile_source: str = "default"
     sample_id: str | None = None
-    resolved: dict = field(default_factory=dict)  # flag code -> owner note
+    resolved: dict = field(default_factory=dict)  # flag code -> owner note (clears the flag)
+    decisions: dict = field(default_factory=dict)  # flag code -> {action, label, note}
+    messages: dict = field(default_factory=dict)  # approval id -> message sent on approval
     last: dict = field(default_factory=dict)  # run, case, pay_day, versions
     ai_cache: dict = field(default_factory=dict)
 
@@ -143,17 +145,62 @@ def _documents_view(s: Session) -> dict:
         "bank_details": [{"source": b.source, "payee": b.payee, "bank": b.bank_name,
                           "account": b.account_number, "verified": b.verified}
                          for b in f.bank_details],
-        "flags": [_flag_json(x) for x in stage.integrity],
+        "flags": [_flag_json(x, s) for x in stage.integrity],
         "profile": s.profile.to_json() if s.profile else None,
         "profile_source": s.profile_source,
     }
 
 
-def _flag_json(x) -> dict:
+def _flag_json(x, s: "Session | None" = None) -> dict:
     return {"code": x.code, "severity": x.severity, "title": x.title, "message": x.message,
             "documents": x.documents, "blocks_execution": x.blocks_execution,
             "resolved": x.resolved, "resolution_note": x.resolution_note,
-            "category": x.category}
+            "category": x.category,
+            "options": [{"id": i, "label": lbl, "clears": clears, "needs_note": note}
+                        for i, lbl, clears, note in flag_options(x.code, x.blocks_execution)],
+            "decision": (s.decisions.get(x.code) if s else None)}
+
+
+# What the owner can do about each check. A blocking flag (bank details,
+# payee) is cleared only by an option that really removes the risk; holding or
+# reporting it keeps every payment blocked. Non-blocking flags are cleared by
+# any decision, which is recorded in the log.
+_VERIFY = ("verified_call", "I called the supplier on the number I already had and they confirmed it",
+           True, True)
+FLAG_OPTIONS: dict[str, list[tuple[str, str, bool, bool]]] = {
+    "BANK_CHANGE": [_VERIFY,
+                    ("use_original", "Pay only the original account from the quote; ignore the new details",
+                     True, False),
+                    ("hold", "Hold every payment until I can verify", False, False),
+                    ("report", "Treat it as fraud: report it and do not pay", False, False)],
+    "PAYEE_MISMATCH": [_VERIFY,
+                       ("use_original", "Pay only the payee named in the quote", True, False),
+                       ("hold", "Hold every payment until I can verify", False, False)],
+    "AMOUNT_MISMATCH": [("use_po", "Use the amount in the purchase order / quote", True, False),
+                        ("ask_corrected", "Ask for a corrected document before paying", True, False),
+                        ("checked", "I checked; the difference is explained", True, True)],
+    "LINE_ITEMS": [("use_total", "Use the stated total; ask the sender to fix the lines", True, False),
+                   ("ask_corrected", "Ask for a corrected document before accepting", True, False)],
+    "NET_TERMS": [("use_later", "Use the later, safer payment day", True, False),
+                  ("ask_customer", "Ask the customer when the days start counting", True, False)],
+    "CANCELLATION": [("ask_deposit", "Ask the customer for a non-refundable deposit", True, False),
+                     ("ask_remove", "Ask the customer to remove the clause", True, False),
+                     ("accept_risk", "Accept the risk shown in 'money at risk'", True, False)],
+    "PRESSURE_LANGUAGE": [("normal_checks", "Ignore the urgency; follow my normal checks", True, False),
+                          ("verify_sender", "Verify the sender by phone first", True, False)],
+    "EMAIL_CONFLICT": [("verify_sender", "Verify the sender by phone first", True, False),
+                       ("use_documents", "Trust the formal documents, not the email", True, False)],
+    "INJECTION": [("ignore", "Ignore the hidden instruction (SolvOrder already does)", True, False),
+                  ("report", "Tell the sender their document contains an AI instruction", True, False)],
+}
+_GENERIC = [("checked", "I checked the documents; it is fine", True, False),
+            ("ask_corrected", "Ask the sender for a corrected document", True, False)]
+
+
+def flag_options(code: str, blocks: bool) -> list[tuple[str, str, bool, bool]]:
+    if code in FLAG_OPTIONS:
+        return FLAG_OPTIONS[code]
+    return [_VERIFY, ("hold", "Hold every payment until I can verify", False, False)] if blocks else _GENERIC
 
 
 def _consents(r) -> list[str]:
@@ -469,15 +516,32 @@ def set_profile(req: ProfileReq):
 class ResolveReq(BaseModel):
     session_id: str
     code: str
-    note: str = Field(min_length=5, max_length=300)
+    action: str = "verified_call"
+    note: str = Field("", max_length=300)
 
 
 @app.post("/api/flags/resolve")
 def resolve_flag(req: ResolveReq):
+    """The owner picks one of the suggested actions for a fraud/integrity check."""
     s = _session(req.session_id)
-    s.resolved[req.code] = req.note.strip()
-    s.log.append("resolve_flag", "T1", {"code": req.code, "note": req.note}, None,
-                 f"owner resolved {req.code}: {req.note.strip()}")
+    stage = doc_extract.to_document_stage(s.facts, s.docs, s.mode, s.note) if s.facts else None
+    flag = next((f for f in (stage.integrity if stage else []) if f.code == req.code), None)
+    if flag is None:
+        raise HTTPException(404, "Unknown check")
+    opt = next((o for o in flag_options(flag.code, flag.blocks_execution) if o[0] == req.action), None)
+    if opt is None:
+        raise HTTPException(400, "Unknown action for this check")
+    _, label, clears, needs_note = opt
+    note = req.note.strip()
+    if needs_note and len(note) < 5:
+        raise HTTPException(400, "Say how you checked (at least 5 characters).")
+    s.decisions[req.code] = {"action": req.action, "label": label, "note": note, "clears": clears}
+    if clears:
+        s.resolved[req.code] = label + (f": {note}" if note else "")
+    else:
+        s.resolved.pop(req.code, None)
+    s.log.append("resolve_flag", "T1", {"code": req.code, "action": req.action, "note": note}, None,
+                 f"owner chose for {req.code}: {label}" + ("" if clears else " (payments stay blocked)"))
     return _documents_view(s)
 
 
@@ -591,7 +655,7 @@ def analyze(req: AnalyzeReq):
         "plans": [_plan_json(r, run, versions[r.plan.id]) for r in ordered],
         "alerts": [{"rule": a.rule, "day": a.day, "message": a.message, "severity": a.severity}
                    for a in run.alerts],
-        "flags": [_flag_json(x) for x in run.integrity_flags],
+        "flags": [_flag_json(x, s) for x in run.integrity_flags],
         "fields": [{"name": f.name, "value": f.value, "source": f.source, "span": f.span,
                     "confidence": round(f.confidence, 2), "question": f.question,
                     "key": f.key, "simulation": f.affects_simulation} for f in run.fields],
@@ -627,7 +691,8 @@ def _approval_json(s: Session) -> dict | None:
     if not a:
         return None
     return {"id": a.approval_id, "plan_id": a.plan_id, "label": a.display_label,
-            "override": a.override, "reason": a.reason, "version": a.plan_version}
+            "override": a.override, "reason": a.reason, "version": a.plan_version,
+            "messages": s.messages.get(a.approval_id, [])}
 
 
 def _last(s: Session) -> dict:
@@ -672,6 +737,66 @@ class ApproveReq(BaseModel):
     plan_id: str
     override: bool = False
     reason: str = Field("", max_length=300)
+    polished: bool = False  # send Gemini's verified rewording instead of the engine draft
+
+
+class PlanReq(BaseModel):
+    session_id: str
+    plan_id: str | None = None
+
+
+def _draft_for(s: Session, plan_id: str) -> str:
+    """The plan's full message text (all parts joined) -- what execute_plan logs."""
+    return "\n\n---\n\n".join(m["body"] for m in _messages_for(s, plan_id))
+
+
+def _messages_for(s: Session, plan_id: str) -> list[dict]:
+    """One engine-drafted message per party the plan needs: the customer (advance or
+    plain acceptance), the supplier (extension) and the lender (financing)."""
+    from dataclasses import replace
+
+    last = _last(s)
+    run, case = last["run"], last["case"]
+    r = run.results.get(plan_id)
+    if r is None:
+        raise HTTPException(404, "Unknown plan")
+    p = r.plan
+    parts = []
+    if p.advance_pct > 0 or (not p.supplier_extension and p.financing is None):
+        parts.append(replace(p, supplier_extension=False, financing=None))
+    if p.supplier_extension:
+        parts.append(replace(p, advance_pct=engine.ZERO, financing=None))
+    if p.financing is not None:
+        parts.append(replace(p, advance_pct=engine.ZERO, supplier_extension=False))
+    out = []
+    for part in parts:
+        body = agent.draft_message(replace(r, plan=part), case, last["pay_day"], run.min_advance)
+        who, to = _recipient(case, part)
+        out.append({"to_name": who, "to": to, "body": body,
+                    "subject": body.splitlines()[0].removeprefix("Subject:").strip()})
+    return out
+
+
+def _recipient(case, plan) -> tuple[str, str]:
+    """(who, mock address) for a single-party plan part -- mirrors agent.draft_message."""
+    import re
+
+    if plan.advance_pct > 0 or (not plan.supplier_extension and plan.financing is None):
+        who = case.customer
+    elif plan.financing is None:
+        who = case.supplier or "Supplier"
+    else:
+        who = plan.financing.lender
+    slug = re.sub(r"[^a-z0-9]+", "-", who.lower()).strip("-") or "counterparty"
+    return who, f"accounts@{slug}.example"
+
+
+@app.post("/api/draft")
+def draft(req: PlanReq):
+    """The engine's messages for any plan the owner is looking at."""
+    s = _session(req.session_id)
+    pid = req.plan_id or _last(s)["run"].winner.plan.id
+    return {"plan_id": pid, "messages": _messages_for(s, pid)}
 
 
 @app.post("/api/approve")
@@ -703,6 +828,20 @@ def approve(req: ApproveReq):
     s.log.append("request_approval", "T1", {"plan_version": pv, "plan": r.plan.id,
                                             "override": req.override, "reason": req.reason},
                  aid, f"approved by owner: {label}")
+    # The approval authorises this plan's messages: they go to the mock outbox now.
+    sent_all = []
+    for i, m in enumerate(_messages_for(s, r.plan.id)):
+        body, source = m["body"], "engine"
+        if req.polished:
+            cached = s.ai_cache.get(("polish", s.last["sig"], run.winner.plan.id, f"{r.plan.id}#{i}"))
+            if cached and cached[1] == "gemini":
+                body, source = cached[0], "gemini"
+        sent, why = send_on_approval(s.approvals[aid], s.approvals, s.gate, s.log, s.outbox,
+                                     m["to"], m["subject"], body)
+        sent_all.append({**m, "body": body, "source": source, "sent": sent,
+                         "status": "sent to the mock outbox (nothing delivered)" if sent
+                         else f"not sent: {why}"})
+    s.messages[aid] = sent_all
     return {"approval": _approval_json(s)}
 
 
@@ -718,12 +857,13 @@ def execute(req: SessionReq):
     if a is None:
         raise HTTPException(409, "Approve a plan first.")
     r = run.results[a.plan_id]
-    draft = (run.draft_message if r.plan.id == run.winner.plan.id else
-             agent.draft_message(r, last["case"], last["pay_day"], run.min_advance))
+    msgs = s.messages.get(a.approval_id, [])
     s.bank = SimulatedBank()  # each execution books into a fresh simulated ledger
-    rep = execute_plan(run, r, draft, a, s.approvals, s.log, s.gate, s.bank, s.outbox,
+    rep = execute_plan(run, r, "\n\n---\n\n".join(m["body"] for m in msgs) or _draft_for(s, r.plan.id),
+                       a, s.approvals, s.log, s.gate, s.bank, s.outbox,
                        MockLenderPortal({o.id: o for o in last["case"].financing_offers}),
-                       blocks=run.execution_blocks)
+                       blocks=run.execution_blocks,
+                       message_already_sent=bool(msgs) and all(m["sent"] for m in msgs))
     s.executed = {"ok": rep.ok, "steps": rep.steps, "consistency": rep.consistency,
                   "override": rep.override,
                   "ledger": s.bank.booked, "outbox": s.outbox.sent[-1:] if rep.ok else []}
@@ -783,11 +923,21 @@ def explain(req: SessionReq):
     return {"text": text, "source": mode}
 
 
+class PolishReq(PlanReq):
+    index: int = 0  # which of the plan's messages
+
+
 @app.post("/api/ai/polish")
-def polish(req: SessionReq):
+def polish(req: PolishReq):
     s = _session(req.session_id)
-    text, mode, note = _ai(s, "polish", "", gemini_client.polish_draft)
-    return {"text": text, "source": mode, "note": note}
+    pid = req.plan_id or _last(s)["run"].winner.plan.id
+    msgs = _messages_for(s, pid)
+    if not 0 <= req.index < len(msgs):
+        raise HTTPException(404, "Unknown message")
+    original = msgs[req.index]["body"]
+    text, mode, note = _ai(s, "polish", f"{pid}#{req.index}",
+                           lambda run: gemini_client.polish_draft(run, original))
+    return {"text": text, "source": mode, "note": note, "plan_id": pid, "index": req.index}
 
 
 @app.get("/api/log")

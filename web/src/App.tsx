@@ -5,7 +5,7 @@ import { ActStep } from "./components/ActStep";
 import { FactsStep, type FactState } from "./components/FactsStep";
 import { HowItWorks } from "./components/HowItWorks";
 import { NeedsModal } from "./components/NeedsModal";
-import { OptionsStep } from "./components/OptionsStep";
+import { OptionsStep, type Choice } from "./components/OptionsStep";
 import { RiskStep } from "./components/RiskStep";
 import { Sidebar, STEPS } from "./components/Sidebar";
 import { StartStep } from "./components/StartStep";
@@ -35,6 +35,7 @@ export default function App() {
   const [missing, setMissing] = useState<string[] | null>(null);
   const [how, setHow] = useState(false);
   const [needsOpen, setNeedsOpen] = useState(false);
+  const [choice, setChoice] = useState<Choice>(null);
   const main = useRef<HTMLDivElement>(null);
 
   useEffect(() => { get<{ ai: string; gemini: boolean }>("/api/health").then((h) => setAi({ label: h.ai, gemini: h.gemini })).catch(() => setAi(null)); }, []);
@@ -43,7 +44,7 @@ export default function App() {
   const setControls = (c: Partial<typeof controls>) => setControlsState((s) => ({ ...s, ...c }));
 
   const restart = useCallback((msg?: string) => {
-    resetSession(); forgetCase(); setView(null); setAnalysis(null); setFacts(EMPTY); setReading(null);
+    resetSession(); forgetCase(); setChoice(null); setView(null); setAnalysis(null); setFacts(EMPTY); setReading(null);
     setControlsState({ priority: "maximize_margin", stress: 15, payDay: null, tie: null });
     setStep(0); setMaxStep(0); setError(msg ?? null);
   }, []);
@@ -109,12 +110,14 @@ export default function App() {
             These were not found in the documents: <b>{missing.join(", ")}</b>. Add them in the table below (or use the manual form on the first screen). SolvOrder never guesses a number.
           </Callout>}
 
-          {step === 0 && <StartStep aiOn={!!ai?.gemini} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); if (v.profile_source === "default") setNeedsOpen(true); }} />}
+          {step === 0 && <StartStep aiOn={!!ai?.gemini} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setChoice(null); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); if (v.profile_source === "default") setNeedsOpen(true); }} />}
           {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} analysing={busy} onOpenNeeds={() => setNeedsOpen(true)} />}
           {step === 2 && analysis && <RiskStep a={analysis} reading={reading} setReading={setReading} onNext={() => go(3)} updating={busy}
             onConfirm={(k) => setFacts((f) => ({ ...f, confirmed: new Set([...f.confirmed, k]) }))} />}
-          {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} updating={busy} />}
-          {step === 4 && analysis && <ActStep key={analysis.verdict.winner + analysis.plans[0]?.version} a={analysis} refresh={async () => { await analyze(); }} />}
+          {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} updating={busy}
+            choice={choice} onChoose={(c) => { setChoice(c); go(4); }} />}
+          {step === 4 && analysis && <ActStep key={analysis.verdict.winner + analysis.plans[0]?.version + (choice?.id ?? "")} a={analysis} choice={choice}
+            refresh={async () => { await analyze(); }} />}
           {step >= 2 && !analysis && !busy && <Callout tone="info">Go back to <b>Check the facts</b> and press <b>Analyse my cash</b>.</Callout>}
         </div>
       </main>

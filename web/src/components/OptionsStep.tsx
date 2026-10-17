@@ -12,11 +12,16 @@ export const PRIORITIES = [
   { value: "most_robust", label: "Safest if paid late", hint: "Survive the longest customer delay" },
 ];
 
-function OptionCard({ p, a, best }: { p: Plan; a: Analysis; best: boolean }) {
+export type Choice = { id: string; override: boolean } | null;
+
+function OptionCard({ p, a, best, chosen, onChoose }: { p: Plan; a: Analysis; best: boolean; chosen: boolean; onChoose: () => void }) {
   const cur = a.case.currency;
   return (
-    <div className={`flex h-full flex-col rounded-2xl border-2 bg-white p-5 ${best ? "border-brand-500 shadow-lg shadow-brand-600/10" : "border-slate-200"}`}>
-      {best && <div className="label mb-1 text-brand-700">★ Recommended</div>}
+    <div className={`flex h-full flex-col rounded-2xl border-2 bg-white p-5 ${chosen ? "border-violet-500 shadow-lg shadow-violet-600/10" : best ? "border-brand-500 shadow-lg shadow-brand-600/10" : "border-slate-200"}`}>
+      <div className="mb-1 flex flex-wrap gap-2">
+        {best && <span className="label text-brand-700">★ Recommended</span>}
+        {chosen && <span className="label text-violet-700">✓ Your choice</span>}
+      </div>
       <div className="text-base font-bold leading-snug text-slate-900">{planTitle(p, cur)}</div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {p.feasible ? <Pill tone="green"><CheckCircle2 className="h-3 w-3" /> Keeps reserve</Pill> : <Pill tone="red"><XCircle className="h-3 w-3" /> {p.violations[0] ?? `Breaks reserve day ${p.first_breach_day}`}</Pill>}
@@ -29,12 +34,15 @@ function OptionCard({ p, a, best }: { p: Plan; a: Analysis; best: boolean }) {
         <dt className="text-slate-500">Paid late, still OK?</dt><dd className="text-right text-xs font-semibold">{p.tolerance?.label ?? "—"}</dd>
       </dl>
       <div className="mt-auto pt-3 text-xs text-slate-500">Needs agreement from: {p.consents.length ? p.consents.join(" and ") : "nobody"}</div>
+      <button className={`${chosen ? "btn-primary" : "btn-secondary"} mt-3 w-full`} onClick={onChoose}>
+        {chosen ? "Chosen: go to approval" : best ? "Go with the recommendation" : "Choose this plan instead"}
+      </button>
     </div>
   );
 }
 
-export function OptionsStep({ a, controls, setControls, onNext, updating }: {
-  a: Analysis; updating: boolean;
+export function OptionsStep({ a, controls, setControls, onNext, updating, choice, onChoose }: {
+  a: Analysis; updating: boolean; choice: Choice; onChoose: (c: Choice) => void;
   controls: { priority: string; stress: number; payDay: number | null; tie: string | null };
   setControls: (c: Partial<{ priority: string; stress: number; payDay: number | null; tie: string | null }>) => void;
   onNext: () => void;
@@ -87,17 +95,23 @@ export function OptionsStep({ a, controls, setControls, onNext, updating }: {
       {a.verdict.priority_conflict && <Callout tone="critical" title="Your priority conflicts with every safe plan">SolvOrder will not recommend a plan that breaks your priority. Choose a different priority, or decline.</Callout>}
 
       <section>
-        <SectionTitle icon={<Scale className="h-5 w-5" />} title="Your options, compared" sub="Every number comes from the engine's day-by-day simulation." />
+        <SectionTitle icon={<Scale className="h-5 w-5" />} title="Your options, compared" sub="SolvOrder recommends one, but the choice is yours: pick any safe plan. Every number comes from the engine's day-by-day simulation." />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <OptionCard p={winner} a={a} best />
-          {shown.map((p) => <OptionCard key={p.id} p={p} a={a} best={false} />)}
+          <OptionCard p={winner} a={a} best chosen={choice?.id === winner.id} onChoose={() => onChoose({ id: winner.id, override: false })} />
+          {shown.map((p) => <OptionCard key={p.id} p={p} a={a} best={false} chosen={choice?.id === p.id} onChoose={() => onChoose({ id: p.id, override: false })} />)}
         </div>
         {feasible.length > 5 && <button className="mt-3 text-sm font-semibold text-brand-700" onClick={() => setShowAll(!showAll)}>{showAll ? "Show fewer" : `Show all ${feasible.length + 1} safe plans`}</button>}
         {failing.length > 0 && (
           <details className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
             <summary className="cursor-pointer text-sm font-semibold text-slate-700">{failing.length} plans that don't work, and why</summary>
             <ul className="mt-3 space-y-1 text-sm">
-              {failing.map((p) => <li key={p.id} className="flex justify-between gap-3 border-t border-slate-100 pt-1"><span>{planTitle(p, cur)}</span><span className="text-right text-rose-700">{p.violations.join(" ") || `cash below reserve from day ${p.first_breach_day} (low ${money(p.min_balance, cur)})`}</span></li>)}
+              {failing.map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-3 border-t border-slate-100 pt-1">
+                  <span>{planTitle(p, cur)}</span>
+                  <span className="flex items-center gap-3 text-right text-rose-700">{p.violations.join(" ") || `cash below reserve from day ${p.first_breach_day} (low ${money(p.min_balance, cur)})`}
+                    {p.id !== "decline" && p.violations.length === 0 && !p.reserve_ok &&
+                      <button className="chip shrink-0 bg-rose-100 text-rose-800 hover:bg-rose-200" onClick={() => onChoose({ id: p.id, override: true })}>Choose anyway (override)</button>}</span>
+                </li>))}
             </ul>
           </details>
         )}

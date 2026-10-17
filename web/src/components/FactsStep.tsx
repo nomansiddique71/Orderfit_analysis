@@ -28,32 +28,45 @@ export function payKey(i: number, label: string, amount: string, day: string) {
   return `Supplier payment ${i + 1}: ${label}=${amount} on ${day}`;
 }
 
-export function FlagCard({ flag, onResolve }: { flag: Flag; onResolve?: (code: string, note: string) => Promise<void> }) {
-  const [note, setNote] = useState("");
+export function FlagCard({ flag, onResolve }: { flag: Flag; onResolve?: (code: string, action: string, note: string) => Promise<void> }) {
+  const [note, setNote] = useState(flag.decision?.note ?? "");
+  const [choice, setChoice] = useState(flag.decision?.action ?? "");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const tone = flag.resolved ? "success" : flag.severity;
+  const opt = flag.options.find((o) => o.id === choice);
+  const canSave = !!opt && (!opt.needs_note || note.trim().length >= 5);
   return (
     <Callout tone={tone} title={
       <span className="flex flex-wrap items-center gap-2">
         {flag.title}
         {flag.category === "fraud" && <Pill tone="red">Fraud check</Pill>}
         {flag.blocks_execution && !flag.resolved && <Pill tone="red">Payments blocked</Pill>}
-        {flag.resolved && <Pill tone="green">Resolved</Pill>}
+        {flag.resolved && <Pill tone="green">Handled</Pill>}
       </span>}
-      action={flag.blocks_execution && !flag.resolved && onResolve ? (
+      action={onResolve && flag.options.length > 0 ? (
         open ? (
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input className="input" value={note} onChange={(e) => setNote(e.target.value)}
-              placeholder="e.g. Called Brightwave on our saved number; they confirmed no change" />
-            <LoadingButton className="btn-danger shrink-0" loading={saving} loadingText="Recording…" disabled={note.trim().length < 5}
-              onClick={async () => { setSaving(true); try { await onResolve(flag.code, note); } finally { setSaving(false); } }}>Record check</LoadingButton>
+          <div className="space-y-2 rounded-xl bg-white/70 p-3">
+            <div className="text-xs font-semibold text-slate-600">What do you want to do? SolvOrder suggests these options; you choose.</div>
+            {flag.options.map((o) => (
+              <label key={o.id} className="flex cursor-pointer items-start gap-2 text-sm text-slate-800">
+                <input type="radio" name={`opt-${flag.code}`} className="mt-1 accent-teal-600" checked={choice === o.id} onChange={() => setChoice(o.id)} />
+                <span>{o.label}{flag.blocks_execution && !o.clears && <span className="ml-1 text-xs text-rose-700">(payments stay blocked)</span>}</span>
+              </label>
+            ))}
+            <input className="input" value={note} maxLength={300} onChange={(e) => setNote(e.target.value)}
+              placeholder={opt?.needs_note ? "Required: how did you check? e.g. called Brightwave on our saved number" : "Optional note for the log"} />
+            <div className="flex gap-2">
+              <LoadingButton className={flag.blocks_execution ? "btn-danger" : "btn-primary"} loading={saving} loadingText="Recording…" disabled={!canSave}
+                onClick={async () => { setSaving(true); try { await onResolve(flag.code, choice, note); setOpen(false); } finally { setSaving(false); } }}>Save my choice</LoadingButton>
+              <button className="btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
+            </div>
           </div>
         ) : (
-          <button className="btn-secondary" onClick={() => setOpen(true)}><PhoneCall className="h-4 w-4" /> I verified this with the supplier</button>
+          <button className="btn-secondary" onClick={() => setOpen(true)}><PhoneCall className="h-4 w-4" /> {flag.decision ? "Change my choice" : "Choose what to do"}</button>
         )) : undefined}>
       {flag.message}
-      {flag.resolved && <div className="mt-1 text-xs">Owner note: {flag.resolution_note}</div>}
+      {flag.decision && <div className="mt-1 text-xs"><b>Your choice:</b> {flag.decision.label}{flag.decision.note && ` (${flag.decision.note})`}</div>}
     </Callout>
   );
 }
@@ -90,8 +103,8 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
   const openBlocks = flags.filter((f) => f.blocks_execution && !f.resolved);
   const pays = state.payEdits ?? view.supplier_payments.map((p) => ({ label: p.label, amount: p.amount.value, day: p.day.value, paid: p.paid }));
 
-  async function resolve(code: string, note: string) {
-    setView(await post<DocView>("/api/flags/resolve", { code, note }));
+  async function resolve(code: string, action: string, note: string) {
+    setView(await post<DocView>("/api/flags/resolve", { code, action, note }));
   }
   const toggle = (key: string) => {
     const c = new Set(state.confirmed);
@@ -118,7 +131,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
       {flags.length > 0 && (
         <Card className="p-6">
           <SectionTitle icon={<ShieldAlert className="h-5 w-5" />} title="Fraud & document checks"
-            sub={openBlocks.length ? "Critical issues block every payment until you record how you checked them." : "Checks run on every document. Review anything below."} />
+            sub={openBlocks.length ? "Critical issues block every payment until you choose a safe way to handle them." : "Checks run on every document. Choose how to handle each one."} />
           <div className="space-y-3">{flags.map((f, i) => <FlagCard key={f.code + i} flag={f} onResolve={resolve} />)}</div>
         </Card>
       )}

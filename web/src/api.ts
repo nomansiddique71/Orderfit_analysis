@@ -10,6 +10,8 @@ export interface Flag {
   code: string; severity: Severity; title: string; message: string; documents: string[];
   blocks_execution: boolean; resolved: boolean; resolution_note: string;
   category: "fraud" | "integrity" | "ambiguity" | "security";
+  options: { id: string; label: string; clears: boolean; needs_note: boolean }[];
+  decision: { action: string; label: string; note: string; clears: boolean } | null;
 }
 export interface DocInfo { doc_id: string; filename: string; kind: string; scanned: boolean; chars: number; text: string }
 export interface Profile {
@@ -76,7 +78,8 @@ export interface CashWalk {
   out_until_low: Record<string, number>; in_until_low: Record<string, number>;
   rows: { day: number; label: string; group: string; kind: string; amount: number; balance: number; below_reserve: boolean }[];
 }
-export interface Approval { id: string; plan_id: string; label: string; override: boolean; reason: string; version: string }
+export interface SentMessage { to: string; to_name: string; subject: string; body: string; source: string; status: string; sent: boolean }
+export interface Approval { id: string; plan_id: string; label: string; override: boolean; reason: string; version: string; messages: SentMessage[] }
 export interface Execution {
   ok: boolean; steps: string[]; consistency: string | null; override: boolean;
   ledger: { day: number; amount: string; label: string }[]; outbox: { to: string; subject: string; body: string; status: string }[];
@@ -143,7 +146,7 @@ async function handle<T>(r: Response): Promise<T> {
 // retries the original request, so the owner never notices.
 type LoadCall = { path: string; body: Record<string, unknown> } | { files: File[]; pasted: string };
 let lastLoad: LoadCall | null = null;
-let resolvedFlags: { code: string; note: string }[] = [];
+let resolvedFlags: Record<string, unknown>[] = [];
 let lastProfile: Record<string, unknown> | null = null; // business details survive a new case
 const LOAD_PATHS = new Set(["/api/documents/sample", "/api/documents/manual"]);
 
@@ -152,7 +155,7 @@ function remember(path: string, body: Record<string, unknown>) {
     lastLoad = { path, body }; resolvedFlags = [];
     if (path === "/api/documents/sample") lastProfile = null; // a sample brings its own business
   }
-  else if (path === "/api/flags/resolve") resolvedFlags.push({ code: String(body.code), note: String(body.note) });
+  else if (path === "/api/flags/resolve") resolvedFlags.push(body);
   else if (path === "/api/profile") lastProfile = body;
 }
 

@@ -132,6 +132,23 @@ class MockOutbox:
                           "status": "sent (mock -- nothing delivered)"})
 
 
+def send_on_approval(approval: Approval, approvals: dict[str, Approval], gate: PermissionGate,
+                     log: OperationLog, outbox: MockOutbox, recipient: str, subject: str,
+                     body: str) -> tuple[bool, str]:
+    """T2: the owner's approval also authorises the message for that plan, so it
+    goes to the mock outbox at once. Same gate as every T2 action: the approval
+    must exist and be bound to this plan version. Payments still wait for Execute."""
+    tag = f" {OVERRIDE_TAG}" if approval.override else ""
+    ok, reason = gate.check_t2("outbox.send", {"to": recipient, "on": "approval"},
+                               approval.approval_id, approvals, approval.plan_version)
+    if not ok:
+        return False, reason or "blocked"
+    outbox.send(recipient, subject, body)
+    log.append("outbox.send", "T2", {"to": recipient, "len": len(body), "on": "approval"},
+               approval.approval_id, "sent to mock outbox on approval (nothing delivered)" + tag)
+    return True, "sent"
+
+
 class MockLenderPortal:
     """Accepts only terms that match the supplied catalogue.
 
@@ -173,13 +190,16 @@ class ExecutionReport:
 def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
                  approvals: dict[str, Approval], log: OperationLog, gate: PermissionGate,
                  bank: SimulatedBank, outbox: MockOutbox,
-                 portal: MockLenderPortal, blocks: list[str] | None = None) -> ExecutionReport:
+                 portal: MockLenderPortal, blocks: list[str] | None = None,
+                 message_already_sent: bool = False) -> ExecutionReport:
     """T2: carry the approved plan version into the sandbox with tier checks.
 
     result is the engine's simulation of the approved plan (the recommended
     plan, or the one the owner chose under a reserve override).
     blocks: unresolved fraud/integrity flags (doc_checks). While any remain,
     nothing reaches the sandbox, whatever the approval says.
+    message_already_sent: the message went to the mock outbox when the owner
+    approved (send_on_approval), so it is not sent twice.
     """
     if blocks:
         log.append("execute_plan", "T2", {"blocks": blocks}, approval.approval_id, "BLOCKED",
@@ -201,15 +221,18 @@ def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
     def report(ok: bool, extra: list[str], consistency: str | None = None) -> ExecutionReport:
         return ExecutionReport(ok, steps + extra, consistency, override=ovr)
 
-    # 1. draft message -> mock outbox (T2, gated)
-    ok, reason = gate.check_t2("outbox.send", {"subject": "draft", "override": ovr},
-                               aid, approvals, pv)
-    if not ok:
-        return report(False, [f"outbox blocked: {reason}"])
-    outbox.send("counterparty@example.com", "OrderFit approved message", draft)
-    log.append("outbox.send", "T2", {"to": "counterparty", "len": len(draft), "override": ovr},
-               aid, "sent (mock)" + tag)
-    steps.append("Draft message posted to mock outbox.")
+    # 1. draft message -> mock outbox (T2, gated), unless it went out on approval
+    if message_already_sent:
+        steps.append("Message already sent to the mock outbox when you approved.")
+    else:
+        ok, reason = gate.check_t2("outbox.send", {"subject": "draft", "override": ovr},
+                                   aid, approvals, pv)
+        if not ok:
+            return report(False, [f"outbox blocked: {reason}"])
+        outbox.send("counterparty@example.com", "OrderFit approved message", draft)
+        log.append("outbox.send", "T2", {"to": "counterparty", "len": len(draft), "override": ovr},
+                   aid, "sent (mock)" + tag)
+        steps.append("Draft message posted to mock outbox.")
 
     # 2. financing acceptance, if any (T2, gated; terms must match the catalogue)
     if w.plan.financing is not None:
