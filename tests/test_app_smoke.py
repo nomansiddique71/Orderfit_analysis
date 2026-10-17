@@ -45,3 +45,33 @@ def test_near_tie_choice_in_app():
     at.button(key="tie_adv0_ext0_OFF-1").click().run()
     assert not at.exception, at.exception
     assert any("resolved by you" in s.value for s in at.success)
+
+
+def _confirmed_app():
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
+    at.run()
+    next(b for b in at.button if b.label == "✅ Confirm").click().run()
+    return at
+
+
+def test_approve_and_execute_in_app():
+    at = _confirmed_app()
+    next(b for b in at.button if b.label == "✅ Owner approves this plan version").click().run()
+    next(b for b in at.button if b.label == "▶️ Execute approved plan in sandbox").click().run()
+    assert not at.exception, at.exception
+    assert any("passed" in m.value for m in at.markdown if "Consistency check" in m.value)
+
+
+def test_reserve_override_flow_in_app():
+    at = _confirmed_app()
+    sel = next(s for s in at.selectbox if s.label.startswith("Plan to approve despite"))
+    sel.select_index(next(i for i, o in enumerate(sel.options)
+                          if o.startswith("Accept as-is"))).run()
+    next(t for t in at.text_input if t.label.startswith("Reason")).input("owner funds gap").run()
+    next(c for c in at.checkbox if c.label.startswith("I understand")).check().run()
+    next(b for b in at.button if b.label == "Approve with reserve override").click().run()
+    assert not at.exception, at.exception
+    assert any("[RESERVE OVERRIDE]" in e.value for e in at.error)
+    next(b for b in at.button if b.label == "▶️ Execute approved plan in sandbox").click().run()
+    assert not at.exception, at.exception
+    assert any("Execution report — [RESERVE OVERRIDE]" in m.value for m in at.markdown)

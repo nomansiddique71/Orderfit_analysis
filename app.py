@@ -21,8 +21,8 @@ import agent
 import engine
 import gemini_client
 from case_data import CASE, QUOTE_TEXT, po_text
-from sandbox import (ExecutionReport, MockLenderPortal, MockOutbox, OperationLog,
-                     PermissionGate, SimulatedBank, execute_plan)
+from sandbox import (OVERRIDE_TAG, Approval, ExecutionReport, MockLenderPortal,
+                     MockOutbox, OperationLog, PermissionGate, SimulatedBank, execute_plan)
 
 D = Decimal
 
@@ -188,8 +188,17 @@ else:
     st.session_state.banner = None
 st.session_state.last_outcome = {"sig": sig, "winner": w.plan.label, "feasible": feas_ids}
 
-plan_version = hashlib.sha256(
-    f"{sig}|{w.plan.id}|{w.min_balance}|{w.net_margin}".encode()).hexdigest()[:10]
+def version_of(r: engine.SimulationResult) -> str:
+    """Hash binding an approval to this exact scenario + plan + engine numbers."""
+    return hashlib.sha256(
+        f"{sig}|{r.plan.id}|{r.min_balance}|{r.net_margin}".encode()).hexdigest()[:10]
+
+
+plan_version = version_of(w)
+# the approval currently in force for this scenario (normal or reserve override)
+active = st.session_state.approvals.get(st.session_state.get("active_approval", ""))
+if active and active.plan_version not in {version_of(r) for r in run.results.values()}:
+    active = None  # scenario changed since approval
 
 # ------------------------------------------------------------------- hero
 
@@ -199,6 +208,11 @@ asis = run.results["accept-as-is"]
 
 if st.session_state.get("banner"):
     st.info(st.session_state.banner, icon="🔄")
+if active and active.override:
+    st.error(f"**{OVERRIDE_TAG}** The owner approved **{active.plan_label}** "
+             f"(`{active.approval_id}`) instead of the recommended plan, knowingly "
+             f"breaching the ${fmt(case.reserve)} reserve. Reason: {active.reason}",
+             icon="⚠️")
 
 st.markdown(f"""
 <div style="border-radius:16px;padding:22px 26px;background:{CARD_BG};
@@ -540,32 +554,62 @@ st.markdown("T2 actions run in the sandbox **only** after owner approval bound t
             "this exact plan version. Changing any slider invalidates approvals.")
 st.code(f"plan_version: {plan_version}\nplan: {w.plan.label}", language=None)
 
-a1, a2 = st.columns(2)
-if a1.button("✅ Owner approves this plan version", type="primary",
-             disabled=w.plan.id == "decline" or run.provisional,
-             help="Decline needs no execution approval. Provisional results must be "
-                  "confirmed before approval."):
-    approval_id = f"APP-{hashlib.sha256(plan_version.encode()).hexdigest()[:6].upper()}"
-    st.session_state.approvals[plan_version] = approval_id
-    st.session_state.log.append("request_approval", "T1",
-                                {"plan_version": plan_version}, None,
-                                f"approved by owner as {approval_id}")
-if a2.button("✍️ Approve with explicit reserve override", disabled=run.provisional):
-    approval_id = f"APP-{hashlib.sha256(plan_version.encode()).hexdigest()[:6].upper()}-OVR"
-    st.session_state.approvals[plan_version] = approval_id
-    st.session_state.log.append("request_approval", "T1",
-                                {"plan_version": plan_version, "override": True},
-                                None, f"approved with override as {approval_id}")
+def _approve(r: engine.SimulationResult, override: bool, reason: str = "") -> None:
+    pv = version_of(r)
+    aid = f"APP-{hashlib.sha256(pv.encode()).hexdigest()[:6].upper()}" + ("-OVR" if override else "")
+    st.session_state.approvals[aid] = Approval(aid, pv, r.plan.id, r.plan.label, override, reason)
+    st.session_state.active_approval = aid
+    st.session_state.executed = None
+    label = f"{OVERRIDE_TAG} {r.plan.label}" if override else r.plan.label
+    st.session_state.log.append(
+        "request_approval", "T1",
+        {"plan_version": pv, "plan": r.plan.id, "override": override, "reason": reason},
+        aid, f"approved by owner: {label}")
 
-approval_id = st.session_state.approvals.get(plan_version)
-if approval_id:
-    st.success(f"Approved as `{approval_id}` (bound to plan version {plan_version}).")
+
+st.button("✅ Owner approves this plan version", type="primary",
+          disabled=w.plan.id == "decline" or run.provisional or not w.feasible,
+          help="Decline needs no execution approval. Provisional results must be "
+               "confirmed before approval.",
+          on_click=_approve, args=(w, False))
+
+# Reserve override: only plans that fail the reserve but meet every other hard
+# constraint. Delivery / financing-cap violations cannot be overridden here.
+overridable = [r for r in run.results.values()
+               if not r.reserve_ok and not r.violations and r.plan.id != "decline"]
+with st.expander("✍️ Approve a plan that breaches the reserve (explicit override)"):
+    if run.provisional:
+        st.info("Confirm the provisional field(s) first.")
+    elif not overridable:
+        st.info("No plan breaches only the reserve — nothing to override.")
+    else:
+        pick = st.selectbox(
+            "Plan to approve despite the reserve breach", overridable,
+            format_func=lambda r: (f"{r.plan.label} — lowest ${fmt(r.min_balance)} on "
+                                   f"day {r.min_day}, first breach day {r.first_breach_day}"))
+        reason = st.text_input("Reason (recorded in the log)", max_chars=200,
+                               placeholder="e.g. owner will inject personal funds on day 20")
+        ack = st.checkbox(f"I understand cash falls to ${fmt(pick.min_balance)} on day "
+                          f"{pick.min_day}, below the ${fmt(case.reserve)} reserve.")
+        if st.button("Approve with reserve override", disabled=not (ack and reason.strip())):
+            _approve(pick, override=True, reason=reason.strip())
+            st.rerun()
+
+if active:
+    target = run.results[active.plan_id]
+    shown = active.display_label
+    (st.error if active.override else st.success)(
+        f"Approved as `{active.approval_id}` — **{shown}** (bound to plan version "
+        f"{active.plan_version}).")
     st.markdown(f"**Will execute:** outbox message → "
-                + (f"lender portal ({w.plan.financing.id}) → " if w.plan.financing else "")
+                + (f"lender portal ({target.plan.financing.id}) → "
+                   if target.plan.financing else "")
                 + "simulated bank ledger, each gated and logged.")
     if st.button("▶️ Execute approved plan in sandbox"):
+        draft = (run.draft_message if target.plan.id == w.plan.id else
+                 agent.draft_message(target, case, pay_day, run.min_advance))
         st.session_state.executed = execute_plan(
-            run, st.session_state.approvals, approval_id,
+            run, target, draft, active, st.session_state.approvals,
             st.session_state.log, st.session_state.gate,
             st.session_state.bank, st.session_state.outbox, st.session_state.portal)
 else:
@@ -574,7 +618,7 @@ else:
 
 ex = st.session_state.get("executed")
 if ex:
-    st.markdown("#### Execution report")
+    st.markdown("#### Execution report" + (f" — {OVERRIDE_TAG}" if ex.override else ""))
     for s in ex.steps:
         st.markdown(f"- {s}")
     if ex.consistency:

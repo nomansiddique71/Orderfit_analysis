@@ -585,6 +585,10 @@ def draft_message(winner: SimulationResult, case: Case, pay_day: int,
                 f"({p.advance_pct * 100:.0f}% of order value) payable on order "
                 f"confirmation. This lets us commit production capacity and deliver by "
                 f"day {case.required_delivery_day}. All other terms as per your PO.")
+    if not p.supplier_extension and p.financing is None:
+        return ("Subject: PO-8841 -- acceptance\n\n"
+                f"We accept PO-8841 (USD {case.order_value:,.0f}) as issued and will "
+                f"deliver by day {case.required_delivery_day}.")
     if p.supplier_extension and p.financing is None:
         return ("Subject: Payment schedule -- PO to Brightwave Supplies\n\n"
                 "We accept your quotation Q-3312 and ask to restructure the payment "

@@ -51,6 +51,30 @@ class OperationLog:
                 for e in self.entries]
 
 
+OVERRIDE_TAG = "[RESERVE OVERRIDE]"
+
+
+@dataclass(frozen=True)
+class Approval:
+    """An owner approval bound to one exact plan version.
+
+    override=True means the owner knowingly approved a plan that breaches the
+    minimum cash reserve. That flag travels with the approval into every log
+    entry and the execution report; it is never dropped or inferred.
+    """
+
+    approval_id: str
+    plan_version: str
+    plan_id: str
+    plan_label: str
+    override: bool = False
+    reason: str = ""
+
+    @property
+    def display_label(self) -> str:
+        return f"{OVERRIDE_TAG} {self.plan_label}" if self.override else self.plan_label
+
+
 class PermissionGate:
     """Checks tier + approval binding before any T2 action reaches the sandbox."""
 
@@ -58,15 +82,22 @@ class PermissionGate:
         self.log = log
 
     def check_t2(self, tool: str, payload: dict, approval_id: str | None,
-                 approved_plans: dict[str, str]) -> tuple[bool, str | None]:
+                 approvals: dict[str, Approval], plan_version: str
+                 ) -> tuple[bool, str | None]:
+        """approvals maps approval_id -> Approval; plan_version is what is about to run."""
         if approval_id is None:
             self.log.append(tool, "T2", payload, None, "BLOCKED",
                             "no approval ID -- T2 actions require an owner-approved plan version")
             return False, "no approval ID"
-        if approval_id not in approved_plans:
+        approval = approvals.get(approval_id)
+        if approval is None:
             self.log.append(tool, "T2", payload, approval_id, "BLOCKED",
                             "unknown approval ID")
             return False, "unknown approval ID"
+        if approval.plan_version != plan_version:
+            self.log.append(tool, "T2", payload, approval_id, "BLOCKED",
+                            "approval is bound to a different plan version")
+            return False, "approval is bound to a different plan version"
         return True, None
 
     def block_t3(self, tool: str, payload: dict, reason: str) -> None:
@@ -85,7 +116,8 @@ class SimulatedBank:
         running = opening
         by_day: dict[int, Decimal] = {}
         for m in movements:
-            by_day[m["day"]] = by_day.get(m["day"], Decimal(0)) + m["amount"]
+            # amounts arrive as strings (JSON-safe payload); parse exactly
+            by_day[m["day"]] = by_day.get(m["day"], Decimal(0)) + Decimal(str(m["amount"]))
         for day in sorted(by_day):
             running += by_day[day]
             self.path[day] = running
@@ -120,61 +152,79 @@ class ExecutionReport:
     ok: bool
     steps: list[str]
     consistency: str | None = None
+    override: bool = False
 
 
-def execute_plan(run, approved_plans: dict[str, str], approval_id: str,
-                 log: OperationLog, gate: PermissionGate, bank: SimulatedBank,
-                 outbox: MockOutbox, portal: MockLenderPortal) -> ExecutionReport:
-    """T2: carry the approved plan version into the sandbox with tier checks."""
+def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
+                 approvals: dict[str, Approval], log: OperationLog, gate: PermissionGate,
+                 bank: SimulatedBank, outbox: MockOutbox,
+                 portal: MockLenderPortal) -> ExecutionReport:
+    """T2: carry the approved plan version into the sandbox with tier checks.
+
+    result is the engine's simulation of the approved plan (the recommended
+    plan, or the one the owner chose under a reserve override).
+    """
     from engine import plan_movements
 
-    w: SimulationResult = run.winner
+    w = result
+    aid, pv, ovr = approval.approval_id, approval.plan_version, approval.override
+    tag = f" {OVERRIDE_TAG}" if ovr else ""
     steps: list[str] = []
+    if ovr:
+        steps.append(f"{OVERRIDE_TAG} Executing '{w.plan.label}', which breaches the "
+                     f"reserve (lowest {w.min_balance:,.0f} on day {w.min_day}). Owner "
+                     f"reason: {approval.reason or '(none given)'}")
+
+    def report(ok: bool, extra: list[str], consistency: str | None = None) -> ExecutionReport:
+        return ExecutionReport(ok, steps + extra, consistency, override=ovr)
 
     # 1. draft message -> mock outbox (T2, gated)
-    ok, reason = gate.check_t2("outbox.send", {"subject": "draft"}, approval_id, approved_plans)
+    ok, reason = gate.check_t2("outbox.send", {"subject": "draft", "override": ovr},
+                               aid, approvals, pv)
     if not ok:
-        return ExecutionReport(False, [f"outbox blocked: {reason}"])
-    outbox.send("counterparty@example.com", "OrderFit approved message", run.draft_message)
-    log.append("outbox.send", "T2", {"to": "counterparty", "len": len(run.draft_message)},
-               approval_id, "sent (mock)")
+        return report(False, [f"outbox blocked: {reason}"])
+    outbox.send("counterparty@example.com", "OrderFit approved message", draft)
+    log.append("outbox.send", "T2", {"to": "counterparty", "len": len(draft), "override": ovr},
+               aid, "sent (mock)" + tag)
     steps.append("Draft message posted to mock outbox.")
 
     # 2. financing acceptance, if any (T2, gated; terms must match the catalogue)
     if w.plan.financing is not None:
         f = w.plan.financing
-        ok, reason = gate.check_t2("lender.accept", {"offer": f.id}, approval_id, approved_plans)
+        ok, reason = gate.check_t2("lender.accept", {"offer": f.id, "override": ovr},
+                                   aid, approvals, pv)
         if not ok:
-            return ExecutionReport(False, steps + [f"lender portal blocked: {reason}"])
+            return report(False, [f"lender portal blocked: {reason}"])
         accepted, msg = portal.accept(f.id, {"principal": str(f.principal),
                                              "fee_pct": str(f.fee_pct),
                                              "origination": str(f.origination),
                                              "draw_day": f.draw_day, "repay_day": f.repay_day})
-        log.append("lender.accept", "T2", {"offer": f.id}, approval_id,
-                   msg if accepted else f"BLOCKED: {msg}", None if accepted else msg)
+        log.append("lender.accept", "T2", {"offer": f.id, "override": ovr}, aid,
+                   (msg if accepted else f"BLOCKED: {msg}") + tag, None if accepted else msg)
         steps.append(f"Lender portal ({f.id}): {msg}.")
         if not accepted:
-            return ExecutionReport(False, steps)
+            return report(False, [])
 
     # 3. bank scheduling (T2, gated)
-    ok, reason = gate.check_t2("bank.post", {"plan": w.plan.id}, approval_id, approved_plans)
+    ok, reason = gate.check_t2("bank.post", {"plan": w.plan.id, "override": ovr},
+                               aid, approvals, pv)
     if not ok:
-        return ExecutionReport(False, steps + [f"bank blocked: {reason}"])
+        return report(False, [f"bank blocked: {reason}"])
     movs = plan_movements(run.case, w.plan, run.customer_payment_day)
     payload = [{"day": m.day, "amount": str(m.amount), "label": m.label} for m in movs]
     bank.post(payload, run.case.opening_cash)
-    log.append("bank.post", "T2", {"movements": len(payload)}, approval_id,
-               f"{len(payload)} movements booked in simulated ledger")
+    log.append("bank.post", "T2", {"movements": len(payload), "override": ovr}, aid,
+               f"{len(payload)} movements booked in simulated ledger" + tag)
     steps.append(f"Simulated bank ledger: {len(payload)} movements booked.")
 
     # 4. consistency check: ledger path must equal the engine's predicted path
     mismatch = [d for d in w.path if d in bank.path and bank.path[d] != w.path[d]]
     if mismatch:
-        log.append("consistency_check", "T0", {"days": len(mismatch)}, approval_id,
-                   "FAILED", "ledger path != engine prediction")
-        return ExecutionReport(False, steps + ["Consistency check FAILED."],
-                               consistency=f"FAILED on {len(mismatch)} day(s) -- run stopped")
-    log.append("consistency_check", "T0", {"days": len(w.path)}, approval_id,
-               "ledger path equals engine prediction on all days")
+        log.append("consistency_check", "T0", {"days": len(mismatch)}, aid,
+                   "FAILED" + tag, "ledger path != engine prediction")
+        return report(False, ["Consistency check FAILED."],
+                      consistency=f"FAILED on {len(mismatch)} day(s) -- run stopped")
+    log.append("consistency_check", "T0", {"days": len(w.path)}, aid,
+               "ledger path equals engine prediction on all days" + tag)
     steps.append("Consistency check passed: ledger path == engine prediction.")
-    return ExecutionReport(True, steps, consistency="passed")
+    return report(True, [], consistency="passed")
