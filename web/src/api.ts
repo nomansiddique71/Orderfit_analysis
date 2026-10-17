@@ -216,3 +216,31 @@ export async function upload(files: File[], pasted: string): Promise<DocView> {
 }
 
 export const logUrl = async () => `/api/log/export?session_id=${encodeURIComponent(await session())}`;
+
+// ---- demo login (auth.py). The token lives in localStorage so a reload keeps you signed in.
+export interface User { email: string; username: string; name: string; business: string; verified: boolean; demo: boolean; member_since: string }
+export interface DemoMail { to: string; subject: string; body: string; time: string; note: string }
+const TOKEN_KEY = "solvorder.token";
+
+export function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+export function setToken(t: string | null) {
+  try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch { /* private mode: session-only */ }
+}
+
+export async function authPost<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
+  const t = getToken();
+  return tracked(fetch(path, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+    body: JSON.stringify(body),
+  }).then((r) => handle<T>(r)));
+}
+
+export async function me(): Promise<User | null> {
+  const t = getToken();
+  if (!t) return null;
+  const r = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${t}` } });
+  if (!r.ok) { setToken(null); return null; }
+  return (await r.json()).user as User;
+}

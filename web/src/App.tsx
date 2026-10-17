@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RotateCcw } from "lucide-react";
-import { ApiError, forgetCase, get, post, resetSession, type Analysis, type DocView } from "./api";
+import { ApiError, authPost, forgetCase, get, me, post, resetSession, setToken, type Analysis, type DocView, type User } from "./api";
+import { AuthScreen, ProfileModal } from "./components/Auth";
 import { ActStep } from "./components/ActStep";
 import { FactsStep, type FactState } from "./components/FactsStep";
 import { HowItWorks } from "./components/HowItWorks";
@@ -36,6 +37,9 @@ export default function App() {
   const [how, setHow] = useState(false);
   const [needsOpen, setNeedsOpen] = useState(false);
   const [choice, setChoice] = useState<Choice>(null);
+  const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = still checking
+  const [profileOpen, setProfileOpen] = useState(false);
+  useEffect(() => { me().then(setUser).catch(() => setUser(null)); }, []);
   const main = useRef<HTMLDivElement>(null);
 
   useEffect(() => { get<{ ai: string; gemini: boolean }>("/api/health").then((h) => setAi({ label: h.ai, gemini: h.gemini })).catch(() => setAi(null)); }, []);
@@ -86,10 +90,19 @@ export default function App() {
     if (r && r.ok) go(2);
   }
 
+  async function logout() {
+    try { await authPost("/api/auth/logout"); } catch { /* already logged out */ }
+    setToken(null); setProfileOpen(false); restart(); setUser(null);
+  }
+
+  if (user === undefined) return <div className="grid h-full place-items-center"><Spinner text="Opening SolvOrder…" /></div>;
+  if (user === null) return <><TopProgress /><AuthScreen onAuthed={(a) => setUser(a.user)} /></>;
+
   return (
     <div className="flex h-full">
       <TopProgress />
-      <Sidebar step={step} maxStep={maxStep} onStep={(i) => (i >= 2 && !analysis ? toRisk() : go(i))} ai={ai} onHowItWorks={() => setHow(true)} />
+      <Sidebar step={step} maxStep={maxStep} onStep={(i) => (i >= 2 && !analysis ? toRisk() : go(i))} ai={ai} onHowItWorks={() => setHow(true)}
+        user={user} onProfile={() => setProfileOpen(true)} />
       <main ref={main} className="flex-1 overflow-y-auto">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/85 px-8 py-4 backdrop-blur">
           <div className="flex items-center justify-between gap-4">
@@ -122,6 +135,7 @@ export default function App() {
         </div>
       </main>
       {how && <HowItWorks onClose={() => setHow(false)} />}
+      {profileOpen && <ProfileModal user={user} onClose={() => setProfileOpen(false)} onUser={setUser} onLogout={logout} />}
       {needsOpen && view && <NeedsModal edits={facts.edits} onClose={() => setNeedsOpen(false)}
         onSaved={(v, answers) => {
           if (v) setView(v);

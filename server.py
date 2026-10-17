@@ -28,12 +28,13 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import agent
+import auth
 import case_builder
 import company_check
 import doc_extract
@@ -1045,6 +1046,120 @@ def export_log(session_id: str):
     s = _session(session_id)
     return Response(json.dumps(s.log.as_dicts(), indent=1), media_type="application/json",
                     headers={"Content-Disposition": "attachment; filename=solvorder_operation_log.json"})
+
+
+# ------------------------------------------------------------ demo login
+
+AUTH = auth.AuthStore()
+
+
+def _auth_call(fn, *args):
+    try:
+        return fn(*args)
+    except auth.AuthError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+def _bearer(authorization: str | None) -> str:
+    return (authorization or "").removeprefix("Bearer ").strip()
+
+
+class SignupReq(BaseModel):
+    name: str = Field(max_length=80)
+    username: str = Field(max_length=30)
+    email: str = Field(max_length=120)
+    password: str = Field(max_length=128)
+
+
+class CodeReq(BaseModel):
+    pending_id: str = Field(max_length=40)
+    code: str = Field(default="", max_length=10)
+    new_password: str = Field(default="", max_length=128)
+
+
+class LoginReq(BaseModel):
+    login: str = Field(max_length=120)
+    password: str = Field(max_length=128)
+
+
+class EmailReq(BaseModel):
+    email: str = Field(max_length=120)
+
+
+class ProfileUpdateReq(BaseModel):
+    name: str = Field(max_length=80)
+    business: str = Field(default="", max_length=80)
+
+
+class PasswordReq(BaseModel):
+    old_password: str = Field(max_length=128)
+    new_password: str = Field(max_length=128)
+
+
+@app.post("/api/auth/signup")
+def signup(req: SignupReq):
+    pid, mail = _auth_call(AUTH.start_signup, req.name, req.username, req.email, req.password)
+    return {"pending_id": pid, "demo_inbox": mail}
+
+
+@app.post("/api/auth/resend")
+def resend(req: CodeReq):
+    pid, mail = _auth_call(AUTH.resend, req.pending_id)
+    return {"pending_id": pid, "demo_inbox": mail}
+
+
+@app.post("/api/auth/verify")
+def verify(req: CodeReq):
+    token, user = _auth_call(AUTH.verify_signup, req.pending_id, req.code)
+    return {"token": token, "user": user.to_json()}
+
+
+@app.post("/api/auth/login")
+def login(req: LoginReq):
+    token, user = _auth_call(AUTH.login, req.login, req.password)
+    return {"token": token, "user": user.to_json()}
+
+
+@app.post("/api/auth/demo")
+def demo_login():
+    token, user = AUTH.demo()
+    return {"token": token, "user": user.to_json()}
+
+
+@app.get("/api/auth/me")
+def me(authorization: str | None = Header(default=None)):
+    return {"user": _auth_call(AUTH.user_for, _bearer(authorization)).to_json()}
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: str | None = Header(default=None)):
+    AUTH.logout(_bearer(authorization))
+    return {"ok": True}
+
+
+@app.post("/api/auth/profile")
+def update_profile(req: ProfileUpdateReq, authorization: str | None = Header(default=None)):
+    return {"user": _auth_call(AUTH.update_profile, _bearer(authorization), req.name,
+                               req.business).to_json()}
+
+
+@app.post("/api/auth/password")
+def change_password(req: PasswordReq, authorization: str | None = Header(default=None)):
+    _auth_call(AUTH.change_password, _bearer(authorization), req.old_password, req.new_password)
+    return {"ok": True}
+
+
+@app.post("/api/auth/forgot")
+def forgot(req: EmailReq):
+    pid, mail = AUTH.start_reset(req.email)
+    return {"pending_id": pid, "demo_inbox": mail,
+            "message": "If an account exists for this email, a code is in the demo inbox."}
+
+
+@app.post("/api/auth/reset")
+def reset(req: CodeReq):
+    token, user = _auth_call(AUTH.finish_reset, req.pending_id, req.code, req.new_password)
+    return {"token": token, "user": user.to_json()}
 
 
 # ------------------------------------------------------------- static UI

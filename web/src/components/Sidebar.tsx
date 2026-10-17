@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
 import {
   BookOpen, BrainCircuit, CheckCircle2, ChevronDown, CircleDot, FileSearch, Gauge, GitCompare,
-  HelpCircle, Lock, ShieldCheck, Sparkles, Stamp,
+  HelpCircle, Lock, ShieldCheck, Sparkles, Stamp, UserRound,
 } from "lucide-react";
+import type { User } from "../api";
 
 export const STEPS = [
   { key: "start", title: "Add documents", sub: "Sample or your own", icon: FileSearch },
@@ -29,9 +30,10 @@ function Term({ t, children }: { t: string; children: ReactNode }) {
   return <p className="mb-2"><span className="font-semibold text-white">{t}: </span>{children}</p>;
 }
 
-export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks }: {
+export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfile }: {
   step: number; maxStep: number; onStep: (i: number) => void;
   ai: { label: string; gemini: boolean } | null; onHowItWorks: () => void;
+  user: User; onProfile: () => void;
 }) {
   return (
     <aside className="flex h-full w-[300px] shrink-0 flex-col bg-gradient-to-b from-ink-950 via-ink-900 to-ink-800 text-slate-200">
@@ -119,6 +121,16 @@ export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks }: {
       </div>
 
       <div className="space-y-3 border-t border-white/10 px-6 py-4">
+        <button onClick={onProfile} className="flex w-full items-center gap-3 rounded-xl bg-white/5 p-2.5 text-left hover:bg-white/10" title="Profile, password and log out">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-600 text-sm font-bold text-white">
+            {user.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || <UserRound className="h-4 w-4" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-white">{user.name}{user.demo && <span className="ml-1 text-[10px] font-normal text-amber-300">demo</span>}</div>
+            <div className="truncate text-[11px] text-slate-400">{user.email}</div>
+          </div>
+          <span className="text-[11px] font-semibold text-teal-300">Profile</span>
+        </button>
         <button onClick={onHowItWorks} className="flex w-full items-center justify-center gap-2 rounded-lg bg-white/10 py-2 text-sm font-semibold text-white hover:bg-white/15">
           <Sparkles className="h-4 w-4" /> How SolvOrder works
         </button>
