@@ -38,6 +38,14 @@ class Movement:
 
 @dataclass(frozen=True)
 class FinancingOffer:
+    """A lender's term sheet. Terms only ever come from a catalogue -- never invented.
+
+    Cost = flat fee (% of principal) + origination + simple monthly interest,
+    pro-rated by days drawn / 30 (e.g. 1.5% per month over 60 days = 3%).
+    min/max_principal bound what the lender will lend; an offer whose
+    principal falls outside them is ineligible (L-02) and never shown as an option.
+    """
+
     id: str
     lender: str
     principal: Decimal
@@ -47,9 +55,45 @@ class FinancingOffer:
     repay_day: int
     expires_day: int
     conditions: str = ""
+    monthly_rate_pct: Decimal = D("0")  # simple interest per 30 days drawn
+    min_principal: Decimal | None = None
+    max_principal: Decimal | None = None
+    principal_step: Decimal = D("500")  # granularity when sizing a loan
 
     def cost(self) -> Decimal:
-        return money(self.principal * self.fee_pct / D(100) + self.origination)
+        months = D(self.repay_day - self.draw_day) / D(30)
+        interest = self.principal * self.monthly_rate_pct / D(100) * months
+        return money(self.principal * self.fee_pct / D(100) + self.origination + interest)
+
+    @property
+    def sizeable(self) -> bool:
+        """True if the lender quotes a principal range we can size a loan within."""
+        return self.min_principal is not None and self.max_principal is not None
+
+    def ineligibility(self) -> str | None:
+        """Reason this offer cannot be used as quoted, or None if it is eligible."""
+        if self.min_principal is not None and self.principal < self.min_principal:
+            return (f"principal {self.principal:,.0f} is below {self.lender}'s minimum "
+                    f"{self.min_principal:,.0f}")
+        if self.max_principal is not None and self.principal > self.max_principal:
+            return (f"principal {self.principal:,.0f} is above {self.lender}'s maximum "
+                    f"{self.max_principal:,.0f}")
+        return None
+
+    def with_principal(self, principal: Decimal) -> "FinancingOffer":
+        from dataclasses import replace
+
+        return replace(self, principal=principal)
+
+    def terms_text(self) -> str:
+        parts = []
+        if self.fee_pct:
+            parts.append(f"{self.fee_pct}% flat fee")
+        if self.monthly_rate_pct:
+            parts.append(f"{self.monthly_rate_pct}% per month")
+        if self.origination:
+            parts.append(f"{self.origination:,.0f} fee")
+        return " + ".join(parts) or "no cost"
 
 
 @dataclass(frozen=True)
@@ -269,6 +313,15 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
 # ------------------------------------------------------------ plan catalogue
 
 
+def eligible_offers(case: Case) -> list[FinancingOffer]:
+    return [o for o in case.financing_offers if o.ineligibility() is None]
+
+
+def ineligible_offers(case: Case) -> list[tuple[FinancingOffer, str]]:
+    return [(o, o.ineligibility()) for o in case.financing_offers
+            if o.ineligibility() is not None]
+
+
 def enumerate_plans(case: Case) -> list[Plan]:
     """Small discrete option set, enumerated exhaustively (no solver needed).
 
@@ -281,7 +334,7 @@ def enumerate_plans(case: Case) -> list[Plan]:
     for pct, ext, offer in product(
         (D("0"), D("0.25"), D("0.50")),
         (False, True),
-        (None, *case.financing_offers),
+        (None, *eligible_offers(case)),
     ):
         if pct == 0 and not ext and offer is None:
             continue  # this is "accept as-is"

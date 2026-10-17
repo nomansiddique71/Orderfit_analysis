@@ -295,7 +295,11 @@ def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
             "constraint_violation", None,
             f"{len(violated)} plan(s) excluded by hard constraints: " + " ".join(reasons),
             "critical" if any(r.plan.id == "accept-as-is" for r in violated) else "warning"))
-    for offer in case.financing_offers:
+    for offer, why in engine.ineligible_offers(case):
+        alerts.append(Alert(
+            "ineligible_offer", None,
+            f"{offer.id} ({offer.lender}) is not an option: {why}.", "info"))
+    for offer in engine.eligible_offers(case):
         alerts.append(Alert(
             "offer_expiry", offer.expires_day,
             f"{offer.id} ({offer.lender}, {offer.principal:,.0f}) expires on day "
@@ -600,8 +604,8 @@ def draft_message(winner: SimulationResult, case: Case, pay_day: int,
         return (f"Subject: Financing acceptance {f.id} -- {f.lender}\n\n"
                 f"We accept term sheet {f.id}: draw USD {f.principal:,.0f} on day "
                 f"{f.draw_day}, repay USD {f.principal + f.cost():,.0f} on day "
-                f"{f.repay_day} (fee {f.fee_pct}% + USD {f.origination:,.0f} "
-                f"origination). Please confirm and issue the drawdown notice.")
+                f"{f.repay_day} ({f.terms_text()}). Please confirm and issue the "
+                f"drawdown notice.")
     return ("Subject: PO-8841 -- acceptance and revised schedule\n\n"
             "We accept PO-8841. To align payments with our cash cycle we propose "
             "adjusting the supplier payment schedule as drafted with this memo.")

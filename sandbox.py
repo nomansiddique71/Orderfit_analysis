@@ -198,6 +198,7 @@ def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
         accepted, msg = portal.accept(f.id, {"principal": str(f.principal),
                                              "fee_pct": str(f.fee_pct),
                                              "origination": str(f.origination),
+                                             "monthly_rate_pct": str(f.monthly_rate_pct),
                                              "draw_day": f.draw_day, "repay_day": f.repay_day})
         log.append("lender.accept", "T2", {"offer": f.id, "override": ovr}, aid,
                    (msg if accepted else f"BLOCKED: {msg}") + tag, None if accepted else msg)

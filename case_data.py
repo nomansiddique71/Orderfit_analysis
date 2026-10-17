@@ -86,5 +86,15 @@ CASE = Case(
         FinancingOffer("OFF-2", "Lumina Capital", D("10000"), D("3.5"), D("150"),
                        draw_day=0, repay_day=61, expires_day=3,
                        conditions="Flat fee 3.5% + USD 150 origination; repay day 61."),
+        FinancingOffer("OFF-3", "Harbor Bank", D("12000"), D("0"), D("100"),
+                       draw_day=0, repay_day=90, expires_day=7,
+                       conditions="Credit line 5,000-20,000: 1.5% per month + USD 100 "
+                                  "fee; repay day 90.",
+                       monthly_rate_pct=D("1.5"), min_principal=D("5000"),
+                       max_principal=D("20000")),
+        FinancingOffer("OFF-4", "Northwind Microfinance", D("3000"), D("2"), D("50"),
+                       draw_day=0, repay_day=45, expires_day=5,
+                       conditions="Minimum loan USD 5,000; 2% flat + USD 50.",
+                       min_principal=D("5000")),
     ),
 )

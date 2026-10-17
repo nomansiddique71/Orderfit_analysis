@@ -139,16 +139,17 @@ def test_near_tie_detected_and_owner_choice_wins():
     case = replace(CASE, reserve=D("5000"))
     run = agent.run_agent(case, 60, "avoid_customer_consent", False)
     top, other = run.near_tie
-    # OFF-2 costs 500 and OFF-1 costs 675: 175 apart, inside 1% of 30,000 (= 300).
-    assert top.plan.id == "adv0_ext0_OFF-2" and other.plan.id == "adv0_ext0_OFF-1"
+    # OFF-2 costs 500 and the OFF-3 credit line 640: 140 apart, inside 1% of 30,000
+    # (= 300). OFF-3 lends 12,000 vs 10,000, so its day-45 low is 7,500 vs 5,500.
+    assert top.plan.id == "adv0_ext0_OFF-2" and other.plan.id == "adv0_ext0_OFF-3"
     assert run.winner.plan.id == "adv0_ext0_OFF-2"
-    assert "higher net margin (+175)" in agent.plan_strengths(top, other)
+    assert "higher net margin (+140)" in agent.plan_strengths(top, other)
     assert any("more cash headroom" in s for s in agent.plan_strengths(other, top))
 
     chosen = agent.run_agent(case, 60, "avoid_customer_consent", False,
-                             tie_choice="adv0_ext0_OFF-1")
-    assert chosen.winner.plan.id == "adv0_ext0_OFF-1"
-    assert chosen.owner_tie_choice == "adv0_ext0_OFF-1"
+                             tie_choice="adv0_ext0_OFF-3")
+    assert chosen.winner.plan.id == "adv0_ext0_OFF-3"
+    assert chosen.owner_tie_choice == "adv0_ext0_OFF-3"
     # a choice outside the tied pair is ignored
     bogus = agent.run_agent(case, 60, "avoid_customer_consent", False, tie_choice="decline")
     assert bogus.winner.plan.id == "adv0_ext0_OFF-2"

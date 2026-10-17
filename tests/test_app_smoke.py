@@ -42,7 +42,7 @@ def test_near_tie_choice_in_app():
         "avoid_customer_consent")
     at.run()
     assert any("Near tie" in w.value for w in at.warning)
-    at.button(key="tie_adv0_ext0_OFF-1").click().run()
+    at.button(key="tie_adv0_ext0_OFF-3").click().run()
     assert not at.exception, at.exception
     assert any("resolved by you" in s.value for s in at.success)
 

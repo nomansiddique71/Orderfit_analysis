@@ -351,7 +351,8 @@ with d2:
                    "payment_before_receipt": "Payment before receipt",
                    "offer_expiry": "Offer expiry", "fragile_plan": "Fragile plan",
                    "constraint_violation": "Hard constraint",
-                   "overdue_receivable": "Overdue receivable"}
+                   "overdue_receivable": "Overdue receivable",
+                   "ineligible_offer": "Ineligible offer", "provisional": "Provisional"}
     for a in sorted(run.alerts, key=lambda a: {"critical": 0, "warning": 1}.get(a.severity, 2)):
         show = {"critical": st.error, "warning": st.warning}.get(a.severity, st.info)
         show(f"🔔 **{alert_title.get(a.rule, a.rule)}** — {a.message}")
@@ -383,6 +384,19 @@ if rest:
             "Net margin": float(r.net_margin),
             "Robust": "yes" if r.robust else "no"} for r in rest]),
             hide_index=True, width="stretch")
+with st.expander(f"🏦 Financing catalogue ({len(case.financing_offers)} offers)"):
+    bad = dict((o.id, why) for o, why in engine.ineligible_offers(case))
+    st.dataframe(pd.DataFrame([{
+        "Offer": o.id, "Lender": o.lender, "Principal": float(o.principal),
+        "Terms": o.terms_text(), "Draw → repay": f"day {o.draw_day} → {o.repay_day}",
+        "Cost": float(o.cost()),
+        "Range": (f"{o.min_principal or 0:,.0f}–{o.max_principal:,.0f}"
+                  if o.max_principal is not None else
+                  (f"≥ {o.min_principal:,.0f}" if o.min_principal is not None else "fixed")),
+        "Status": f"⛔ ineligible: {bad[o.id]}" if o.id in bad else "eligible",
+    } for o in case.financing_offers]), hide_index=True, width="stretch")
+    st.caption("Ineligible offers are never shown as options. Terms come only from "
+               "this catalogue; the agent cannot invent or change them.")
 excluded = [r for r in run.results.values() if r.violations]
 if excluded:
     with st.expander(f"⛔ {len(excluded)} plans excluded by hard constraints"):
