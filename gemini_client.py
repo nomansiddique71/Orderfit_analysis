@@ -176,6 +176,9 @@ def _memo_text(run) -> str:
                        for r in run.ranked[1:5]],
         "uncertainty": uncertainty_text(run),
         "open_questions": run.questions,
+        "provisional_waiting_for_owner_confirmation": [
+            {"field": f.name, "value": f.value, "confidence": f.confidence}
+            for f in getattr(run, "provisional_fields", [])],
         "minimum_advance_that_works": (str(run.min_advance[0]) if run.min_advance else None),
     }
     return json.dumps(payload, indent=1)

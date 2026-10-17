@@ -146,7 +146,18 @@ from dataclasses import replace as _replace
 case = _replace(CASE, reserve=D(str(reserve)), max_financing_cost=D(str(max_fin_cost)),
                 delivery_day=delivery_day)
 
-run = agent.run_agent(case, pay_day, priority, injected)
+# owner-confirmed low-confidence fields (ExtractedField.key); survives slider changes
+st.session_state.setdefault("confirmed", set())
+
+
+def _confirm_field(key: str) -> None:
+    st.session_state.confirmed.add(key)
+    st.session_state.log.append("owner_confirm_field", "T1", {"field": key}, None,
+                                f"owner confirmed {key}")
+
+
+run = agent.run_agent(case, pay_day, priority, injected,
+                      confirmed=frozenset(st.session_state.confirmed))
 w = run.winner
 st.session_state.log.append("run_agent", "T0", {"pay_day": pay_day, "priority": priority},
                             None, f"decision: {w.plan.label}")
@@ -185,7 +196,7 @@ st.markdown(f"""
 <div style="border-radius:16px;padding:22px 26px;background:{CARD_BG};
      border-left:6px solid {accent};margin-bottom:4px">
   <div style="font-size:12px;color:{MUTED};letter-spacing:.08em;font-weight:700">
-    DECISION MEMO — {case.name.upper()}</div>
+    {"PROVISIONAL " if run.provisional else ""}DECISION MEMO — {case.name.upper()}</div>
   <div style="font-size:26px;font-weight:800;margin:6px 0 2px">
     {icon} {w.plan.label}</div>
   <div style="font-size:14px;color:{SECONDARY}">
@@ -205,6 +216,21 @@ c4.metric("Accept as-is", "breach" if asis.first_breach_day is not None else "ok
 c5.metric("Robust +15d late", "yes" if w.robust else "NO",
           f"fails day {w.stress_fail_day}" if w.stress_fail_day else "stress passed",
           delta_color="inverse")
+
+if run.provisional:
+    with st.container(border=True):
+        st.warning("**Provisional — waiting for owner confirmation.** The numbers above "
+                   "assume the values below. A low-confidence field that changes the "
+                   "simulation is never treated as fact; approval stays blocked until "
+                   "you confirm it.", icon="⏳")
+        for f in run.provisional_fields:
+            q1, q2 = st.columns([4, 1])
+            q1.markdown(f"**{f.name}:** {f.value} · confidence {f.confidence:.2f} · "
+                        f"source {f.source}  \n{f.question or ''}  \n"
+                        f"_If the payment date is different, move the "
+                        f"**Customer payment day** slider first, then confirm._")
+            q2.button("✅ Confirm", key=f"confirm_{f.key}", on_click=_confirm_field,
+                      args=(f.key,), use_container_width=True)
 
 # agent chain: stages A-E as progress chips
 chips = "  ".join(
@@ -482,14 +508,15 @@ st.code(f"plan_version: {plan_version}\nplan: {w.plan.label}", language=None)
 
 a1, a2 = st.columns(2)
 if a1.button("✅ Owner approves this plan version", type="primary",
-             disabled=w.plan.id == "decline",
-             help="Decline needs no execution approval."):
+             disabled=w.plan.id == "decline" or run.provisional,
+             help="Decline needs no execution approval. Provisional results must be "
+                  "confirmed before approval."):
     approval_id = f"APP-{hashlib.sha256(plan_version.encode()).hexdigest()[:6].upper()}"
     st.session_state.approvals[plan_version] = approval_id
     st.session_state.log.append("request_approval", "T1",
                                 {"plan_version": plan_version}, None,
                                 f"approved by owner as {approval_id}")
-if a2.button("✍️ Approve with explicit reserve override"):
+if a2.button("✍️ Approve with explicit reserve override", disabled=run.provisional):
     approval_id = f"APP-{hashlib.sha256(plan_version.encode()).hexdigest()[:6].upper()}-OVR"
     st.session_state.approvals[plan_version] = approval_id
     st.session_state.log.append("request_approval", "T1",

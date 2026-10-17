@@ -97,3 +97,28 @@ def test_overdue_receivable_alert_shows_breach_effect():
     assert alert.severity == "critical"
     # As-is already breaches on day 20 (before day 25), so that date is unchanged.
     assert "as-is first breach day 20 → day 20" in alert.message
+
+
+# ------------------------------------------------------ low confidence
+
+
+def test_low_confidence_simulation_field_makes_result_provisional():
+    import agent
+    run = agent.run_agent(CASE, 60, "maximize_margin", False)
+    # regex extraction gives the early-settlement discount 0.62 (< 0.7): it can
+    # move the customer's payment date, so the day-60 result is only provisional.
+    assert run.provisional
+    assert [f.name for f in run.provisional_fields] == ["Early-settlement discount"]
+    assert agent.uncertainty_rating(run)[1].startswith("PROVISIONAL")
+    assert any(a.rule == "provisional" for a in run.alerts)
+
+    key = run.provisional_fields[0].key
+    confirmed = agent.run_agent(CASE, 60, "maximize_margin", False, frozenset({key}))
+    assert not confirmed.provisional
+    assert confirmed.winner.plan.id == run.winner.plan.id  # numbers unchanged
+
+
+def test_low_confidence_non_simulation_field_is_not_provisional():
+    import agent
+    f = agent.ExtractedField("Deposit refundability", "x", "Q-3312", "x", 0.4)
+    assert f.low_confidence and not f.affects_simulation

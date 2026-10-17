@@ -35,6 +35,20 @@ class ExtractedField:
     confidence: float
     question: str | None = None  # set when confidence is below threshold
 
+    @property
+    def affects_simulation(self) -> bool:
+        """True if this field feeds a dated cash movement or a hard constraint."""
+        return self.name in SIMULATION_FIELDS
+
+    @property
+    def low_confidence(self) -> bool:
+        return self.confidence < LOW_CONFIDENCE
+
+    @property
+    def key(self) -> str:
+        """Identity used for owner confirmation: a changed value needs re-confirming."""
+        return f"{self.name}={self.value}"
+
 
 @dataclass
 class InjectionFlag:
@@ -102,6 +116,15 @@ FIELD_NAMES = [
     "Supplier second payment", "Shipping & handling", "Deposit refundability",
 ]
 LOW_CONFIDENCE = 0.7
+
+# Fields whose value changes a dated movement, the payment date or a hard
+# constraint. If one of these is low-confidence and unconfirmed, the result is
+# provisional: we never present a simulation of a guess as the answer.
+SIMULATION_FIELDS = {
+    "Order value", "Delivery required by", "Customer payment terms",
+    "Early-settlement discount", "Supplier deposit", "Supplier second payment",
+    "Shipping & handling",
+}
 
 # successful Gemini extractions, keyed by document text (one call per variant)
 _EXTRACTION_CACHE: dict[tuple[str, str], tuple] = {}
@@ -336,10 +359,22 @@ class AgentRun:
     questions: list[str]
     extraction_mode: str = "regex"  # "gemini" (verified) or "regex" (fallback)
     extraction_note: str = ""
+    # low-confidence simulation fields the owner has not confirmed yet
+    provisional_fields: list[ExtractedField] = field(default_factory=list)
+
+    @property
+    def provisional(self) -> bool:
+        return bool(self.provisional_fields)
 
 
 def run_agent(case: Case, customer_payment_day: int, priority: str,
-              injected: bool) -> AgentRun:
+              injected: bool, confirmed: frozenset[str] = frozenset()) -> AgentRun:
+    """Run stages A-E.
+
+    confirmed: ExtractedField.key values the owner has explicitly confirmed.
+    Any low-confidence field that affects the simulation and is not in this
+    set makes the whole result provisional.
+    """
     from case_data import QUOTE_TEXT, po_text
 
     log: list[tuple[str, str, str]] = []
@@ -348,6 +383,8 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
     po, quote = po_text(injected), QUOTE_TEXT
     fields, injections, extraction_mode, extraction_note = extract_documents(po, quote, case)
     questions = [f.question for f in fields if f.question]
+    provisional_fields = [f for f in fields if f.affects_simulation and f.low_confidence
+                          and f.key not in confirmed]
     log.append(("A", "Commercial document extraction",
                 ("Gemini structured extraction, verified by the engine: "
                  if extraction_mode == "gemini" else "Regex fallback extraction: ")
@@ -389,7 +426,8 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
     log.append(("D", "Option generation & selection",
                 f"Exhaustive enumeration over the defined action set; "
                 f"{sum(1 for r in ranked if r.feasible)} of {len(plans)} plans meet the "
-                f"reserve in the base scenario; owner priority '{priority}' applied. "
+                f"reserve and hard constraints in the base scenario; owner priority "
+                f"'{priority}' applied. "
                 + ("Priority conflicts with every feasible plan -- escalating."
                    if priority_conflict else f"Winner: {winner.plan.label}.")))
 
@@ -400,6 +438,13 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
 
     min_advance = engine.minimum_advance(case, customer_payment_day, STRESS_DELAYS)
     alerts = raise_alerts(case, as_is, winner, results, customer_payment_day)
+    for f in provisional_fields:
+        alerts.insert(0, Alert(
+            "provisional", None,
+            f"Result is PROVISIONAL: '{f.name}' ({f.value}) is low-confidence "
+            f"({f.confidence:.2f}) and affects the simulation. "
+            + (f.question or "Please confirm it."),
+            "critical"))
     draft = draft_message(winner, case, customer_payment_day, min_advance)
 
     return AgentRun(
@@ -409,7 +454,7 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
         priority_conflict=priority_conflict, alerts=alerts, sensitivity=sensitivity,
         flip_day=flip_day, min_advance=min_advance, draft_message=draft,
         questions=questions, extraction_mode=extraction_mode,
-        extraction_note=extraction_note,
+        extraction_note=extraction_note, provisional_fields=provisional_fields,
     )
 
 
@@ -434,6 +479,16 @@ def sensitivity_scan(case: Case, priority: str) -> tuple[list[tuple[int, str]], 
 
 
 def uncertainty_rating(run: AgentRun) -> tuple[str, str]:
+    level, why = _base_uncertainty(run)
+    if run.provisional:
+        names = ", ".join(f"'{f.name}'" for f in run.provisional_fields)
+        if level == "LOW":
+            level = "MEDIUM"
+        why = (f"PROVISIONAL -- waiting for owner confirmation of {names}. " + why)
+    return level, why
+
+
+def _base_uncertainty(run: AgentRun) -> tuple[str, str]:
     w = run.winner
     if run.priority_conflict:
         return ("HIGH", "The owner's priority conflicts with every feasible plan. "
