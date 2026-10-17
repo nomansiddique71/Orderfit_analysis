@@ -60,7 +60,8 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
 
       <section id="samples">
         <SectionTitle icon={<FileText className="h-5 w-5" />} title="Option 1 · Try a sample case"
-          sub="Synthetic businesses and documents. Each case shows a different risk SolvOrder handles." />
+          sub="Synthetic businesses and documents. Each case shows a different risk SolvOrder handles."
+          right={<a href="/api/samples/all.zip" download className="btn-secondary shrink-0"><Download className="h-4 w-4" /> Download all sample PDFs</a>} />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {packs.map((p) => (
             <Card key={p.id} className="flex flex-col p-5 transition hover:shadow-md">
@@ -89,7 +90,7 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
       <section className="grid gap-6 lg:grid-cols-2">
         <Card className="p-6">
           <SectionTitle icon={<Upload className="h-5 w-5" />} title="Option 2 · Use your own documents"
-            sub="Purchase order, supplier quote, invoice or email. PDF or text, up to 6 files." />
+            sub="Purchase order, supplier quote, invoice or email. PDF or text, up to 6 files. No files to hand? Use “Download all sample PDFs” above and upload one folder's PDFs together." />
           <div onClick={() => input.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); setFiles((f) => [...f, ...Array.from(e.dataTransfer.files)].slice(0, 6)); }}
