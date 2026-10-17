@@ -20,7 +20,8 @@ from engine import Case, SimulationResult
 D = Decimal
 ZERO = D("0")
 
-STRESS_DELAYS = [15]  # customer pays 15 days late
+STRESS_DELAYS = [15]  # default late-payment stress: customer pays 15 days late
+STRESS_OPTIONS = [15, 30, 60, 90]  # stress matrix columns; owner picks the binding one
 NEAR_TIE_PCT = D("0.01")  # top plans within 1% of order value in net margin = near tie
 
 
@@ -264,7 +265,8 @@ class Alert:
 
 def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
                  results: dict[str, SimulationResult] | None = None,
-                 customer_payment_day: int | None = None) -> list[Alert]:
+                 customer_payment_day: int | None = None,
+                 stress_delay: int = STRESS_DELAYS[0]) -> list[Alert]:
     alerts: list[Alert] = []
     if as_is.first_breach_day is not None:
         alerts.append(Alert(
@@ -308,7 +310,7 @@ def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
     if winner.feasible and winner.stress_fail_day is not None:
         alerts.append(Alert(
             "fragile_plan", winner.stress_fail_day,
-            f"Recommended plan '{winner.plan.label}' fails the 15-day late-payment "
+            f"Recommended plan '{winner.plan.label}' fails the {stress_delay}-day late-payment "
             f"stress: breach on day {winner.stress_fail_day}.",
             "warning"))
     return alerts
@@ -409,6 +411,7 @@ class AgentRun:
     provisional_fields: list[ExtractedField] = field(default_factory=list)
     near_tie: tuple[SimulationResult, SimulationResult] | None = None
     owner_tie_choice: str | None = None  # plan id the owner picked to break a near tie
+    stress_delay: int = STRESS_DELAYS[0]  # the delay that defines "robust"
 
     @property
     def provisional(self) -> bool:
@@ -417,7 +420,8 @@ class AgentRun:
 
 def run_agent(case: Case, customer_payment_day: int, priority: str,
               injected: bool, confirmed: frozenset[str] = frozenset(),
-              tie_choice: str | None = None) -> AgentRun:
+              tie_choice: str | None = None,
+              stress_delay: int = STRESS_DELAYS[0]) -> AgentRun:
     """Run stages A-E.
 
     confirmed: ExtractedField.key values the owner has explicitly confirmed.
@@ -425,7 +429,9 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
     set makes the whole result provisional.
     tie_choice: plan id the owner picked when the top two plans were a near
     tie. Ignored unless it is one of the two tied plans.
+    stress_delay: days late that a plan must survive to count as robust.
     """
+    stress = [stress_delay]
     from case_data import QUOTE_TEXT, po_text
 
     log: list[tuple[str, str, str]] = []
@@ -451,12 +457,15 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
 
     # Stage C -- simulation for every candidate plan, base + stress
     plans = engine.enumerate_plans(case)
-    results = {p.id: engine.simulate(case, p, customer_payment_day, STRESS_DELAYS)
+    results = {p.id: engine.simulate(case, p, customer_payment_day, stress)
                for p in plans}
+    for r in results.values():
+        r.tolerance = engine.delay_tolerance(case, r.plan, customer_payment_day)
     log.append(("C", "Cash-flow simulation",
                 f"{len(plans)} plans simulated for customer payment on day "
-                f"{customer_payment_day}, plus a +{STRESS_DELAYS[0]}-day late-payment "
-                f"stress run each. Engine verifies every hard constraint."))
+                f"{customer_payment_day}, plus a +{stress_delay}-day late-payment "
+                f"stress run and a delay-tolerance search each. Engine verifies every "
+                f"hard constraint."))
 
     # Stage D/E -- constrained selection, ranking, uncertainty
     ranked = engine.rank_plans(list(results.values()), case, priority)
@@ -490,13 +499,13 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
                    + (" -- owner chose." if owner_tie_choice else " -- owner asked to choose.")
                    if near_tie else "")))
 
-    sensitivity, flip_day = sensitivity_scan(case, priority)
+    sensitivity, flip_day = sensitivity_scan(case, priority, stress)
     log.append(("E", "Memo, sensitivity & drafting",
                 f"Sensitivity scanned over customer payment days 40-90; "
                 f"first flip at day {flip_day if flip_day is not None else '-'}."))
 
-    min_advance = engine.minimum_advance(case, customer_payment_day, STRESS_DELAYS)
-    alerts = raise_alerts(case, as_is, winner, results, customer_payment_day)
+    min_advance = engine.minimum_advance(case, customer_payment_day, stress)
+    alerts = raise_alerts(case, as_is, winner, results, customer_payment_day, stress_delay)
     for f in provisional_fields:
         alerts.insert(0, Alert(
             "provisional", None,
@@ -514,18 +523,20 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
         flip_day=flip_day, min_advance=min_advance, draft_message=draft,
         questions=questions, extraction_mode=extraction_mode,
         extraction_note=extraction_note, provisional_fields=provisional_fields,
-        near_tie=near_tie, owner_tie_choice=owner_tie_choice,
+        near_tie=near_tie, owner_tie_choice=owner_tie_choice, stress_delay=stress_delay,
     )
 
 
-def sensitivity_scan(case: Case, priority: str) -> tuple[list[tuple[int, str]], int | None]:
+def sensitivity_scan(case: Case, priority: str, stress: list[int] | None = None
+                     ) -> tuple[list[tuple[int, str]], int | None]:
     """Re-run the full decision for payment days 40..90; find the first flip."""
     path: list[tuple[int, str]] = []
     flip = None
     baseline = None
     for day in range(40, 91):
         ranked = engine.rank_plans(
-            [engine.simulate(case, p, day, STRESS_DELAYS) for p in engine.enumerate_plans(case)],
+            [engine.simulate(case, p, day, stress or STRESS_DELAYS)
+             for p in engine.enumerate_plans(case)],
             case, priority)
         label = ranked[0].plan.label if ranked else "Decline the order"
         if ranked and ranked[0].plan.id == "decline":
@@ -558,11 +569,12 @@ def _base_uncertainty(run: AgentRun) -> tuple[str, str]:
         return ("HIGH", "No feasible plan found. Escalated for a decline/renegotiate decision.")
     if w.stress_fail_day is not None:
         return ("HIGH", f"'{w.plan.label}' meets the reserve on expected dates but fails "
-                        f"the 15-day late-payment stress (breach day {w.stress_fail_day}). "
+                        f"the {run.stress_delay}-day late-payment stress (breach day "
+                        f"{w.stress_fail_day}). "
                         f"Escalated for owner review.")
     fragile = [r for r in run.ranked if r.feasible and r.stress_fail_day is not None]
     if fragile:
-        return ("MEDIUM", f"Recommendation is robust to a 15-day delay, but "
+        return ("MEDIUM", f"Recommendation is robust to a {run.stress_delay}-day delay, but "
                           f"{len(fragile)} alternative plan(s) (e.g. {fragile[0].plan.label}) "
                           f"fail under stress. The result depends on the customer paying "
                           f"on day {run.customer_payment_day}.")

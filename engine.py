@@ -134,6 +134,7 @@ class SimulationResult:
     low_path: dict[int, Decimal] = field(default_factory=dict)
     # hard constraints other than the reserve (delivery date, financing-cost cap)
     violations: list[str] = field(default_factory=list)
+    tolerance: "Tolerance | None" = None  # filled in by the agent (delay_tolerance)
 
     @property
     def reserve_ok(self) -> bool:
@@ -189,8 +190,12 @@ def constraint_violations(case: Case, plan: Plan) -> list[str]:
     return out
 
 
-def plan_movements(case: Case, plan: Plan, customer_payment_day: int) -> list[Movement]:
-    """All dated movements for a plan under one customer-payment scenario."""
+def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None
+                   ) -> list[Movement]:
+    """All dated movements for a plan under one customer-payment scenario.
+
+    customer_payment_day=None models a customer who never pays the balance.
+    """
     if plan.id == "decline":
         return list(case.base_movements)  # declining the order: no order cash flows
     out: list[Movement] = list(case.base_movements)
@@ -205,11 +210,10 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int) -> list[Mo
     # The advance is part of the order value, not extra money: the customer's
     # final payment is the order value minus whatever was paid up front.
     advance = money(case.order_value * plan.advance_pct)
-    out.append(
-        Movement(customer_payment_day, case.order_value - advance,
+    if customer_payment_day is not None:
+        out.append(Movement(customer_payment_day, case.order_value - advance,
                  "Customer payment (PO-8841)" + (" -- balance after advance" if advance else ""),
-                 "order_revenue", "Meridian Retail Group")
-    )
+                 "order_revenue", "Meridian Retail Group"))
     if advance > 0:
         out.append(
             Movement(0, advance,
@@ -308,6 +312,75 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
         low_path=low,
         violations=violations,
     )
+
+
+# --------------------------------------------------------- delay tolerance
+
+
+@dataclass(frozen=True)
+class Tolerance:
+    """How many days late the customer can pay before the plan breaks.
+
+    kind: "never_pays_safe" (X-01) -- holds even if the balance never arrives;
+          "fails_on_time"  (X-02) -- breaks even if the customer pays on time;
+          "days"                  -- holds for up to `days` days late.
+    """
+
+    kind: str
+    days: int | None = None
+    last_safe_pay_day: int | None = None
+
+    @property
+    def rank_value(self) -> int:
+        """Bigger = more robust. Used for sorting only."""
+        if self.kind == "never_pays_safe":
+            return 10**6
+        if self.kind == "fails_on_time":
+            return -1
+        return self.days
+
+    def survives(self, delay: int) -> bool:
+        return self.rank_value >= delay
+
+    @property
+    def label(self) -> str:
+        if self.kind == "never_pays_safe":
+            return "safe even if the customer never pays"
+        if self.kind == "fails_on_time":
+            return "fails even if paid on time"
+        return f"{self.days} day(s) late (pay by day {self.last_safe_pay_day})"
+
+
+def feasible_at(case: Case, plan: Plan, customer_payment_day: int | None) -> bool:
+    """Reserve met on every day (intra-day) and no hard-constraint violation."""
+    if constraint_violations(case, plan):
+        return False
+    low, _ = daily_balances(case.opening_cash,
+                            plan_movements(case, plan, customer_payment_day))
+    return all(b >= case.reserve for b in low.values())
+
+
+def delay_tolerance(case: Case, plan: Plan, customer_payment_day: int) -> Tolerance:
+    """Largest payment delay (days) that still keeps the reserve.
+
+    Paying later can only lower (never raise) the balance on any day, so
+    feasibility is monotone in the delay and a binary search is exact.
+    """
+    if not feasible_at(case, plan, customer_payment_day):
+        return Tolerance("fails_on_time")
+    if plan.id == "decline" or feasible_at(case, plan, None):
+        return Tolerance("never_pays_safe")
+    # Paying on or after the last event day is the same as never paying
+    # (outflows come first that day), which we know fails.
+    last = max(m.day for m in plan_movements(case, plan, None))
+    lo, hi = 0, last - customer_payment_day  # feasible(lo) is True, feasible(hi) is False
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if feasible_at(case, plan, customer_payment_day + mid):
+            lo = mid
+        else:
+            hi = mid
+    return Tolerance("days", lo, customer_payment_day + lo)
 
 
 # ------------------------------------------------------------ plan catalogue

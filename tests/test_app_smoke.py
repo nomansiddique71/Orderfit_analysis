@@ -75,3 +75,11 @@ def test_reserve_override_flow_in_app():
     next(b for b in at.button if b.label == "▶️ Execute approved plan in sandbox").click().run()
     assert not at.exception, at.exception
     assert any("Execution report — [RESERVE OVERRIDE]" in m.value for m in at.markdown)
+
+
+def test_stress_selector_and_matrix_render():
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
+    at.run()
+    next(s for s in at.select_slider if s.label.startswith("Late-payment stress")).set_value(60).run()
+    assert not at.exception, at.exception
+    assert any("Late-payment stress matrix" in m.value for m in at.markdown)

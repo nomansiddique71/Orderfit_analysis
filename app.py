@@ -71,12 +71,13 @@ def tier_chip(tier: str) -> str:
 
 def option_card(icon: str, label: str, *, winner: bool, feasible: bool,
                 robust: bool, trough: str, trough_day: int, cost: str,
-                margin: str, consent: str, breach: str) -> str:
+                margin: str, consent: str, breach: str, stress: int,
+                tolerance: str) -> str:
     border = GREEN if winner else GRID
     head = "★ RECOMMENDED" if winner else ("Decline baseline" if label.startswith("Decline") else "")
     tick = "✅ feasible" if feasible else f"❌ breaches (day {breach})"
-    rob = "robust +15d" if robust else f"fails +15d stress (day {breach})" \
-        if not feasible else "fails +15d stress"
+    rob = f"robust +{stress}d" if robust else f"fails +{stress}d stress (day {breach})" \
+        if not feasible else f"fails +{stress}d stress"
     return f"""
 <div style="border:2px solid {border};border-radius:12px;padding:14px 16px;
      background:{CARD_BG};height:100%;{'box-shadow:0 2px 10px rgba(0,0,0,.08);' if winner else ''}">
@@ -85,6 +86,7 @@ def option_card(icon: str, label: str, *, winner: bool, feasible: bool,
   <div style="font-size:13px;color:{SECONDARY};line-height:1.7">
     <div>{tick}</div>
     <div>{'🛡️ ' if robust else '⚠️ '}{rob}</div>
+    <div>⏱️ Late-payment tolerance: <b>{tolerance}</b></div>
     <div>📉 Lowest: <b>{trough}</b> (day {trough_day})</div>
     <div>💰 Cost: <b>{cost}</b> · Net margin: <b>{margin}</b></div>
     <div style="color:{MUTED}">Consent needed: {consent}</div>
@@ -105,6 +107,10 @@ with st.sidebar:
                               int(CASE.reserve), step=500)
     priority = st.selectbox("Owner priority (ranked first)",
                             list(PRIORITY_LABELS), format_func=PRIORITY_LABELS.get)
+    stress_delay = st.select_slider(
+        "Late-payment stress (days)", agent.STRESS_OPTIONS, value=agent.STRESS_DELAYS[0],
+        help="A plan is 'robust' only if the reserve holds when the customer pays "
+             "this many days late.")
     with st.expander("Hard constraints"):
         max_fin_cost = st.number_input(
             "Max financing cost (USD)", 0, 50_000, int(CASE.max_financing_cost), step=50,
@@ -128,7 +134,8 @@ with st.sidebar:
 
 # ------------------------------------------------------------------- state
 
-sig_src = f"{pay_day}|{reserve}|{priority}|{injected}|{max_fin_cost}|{delivery_day}"
+sig_src = (f"{pay_day}|{reserve}|{priority}|{injected}|{max_fin_cost}|{delivery_day}|"
+           f"{stress_delay}")
 sig = hashlib.sha256(sig_src.encode()).hexdigest()[:10]
 
 if st.session_state.get("sig") != sig:
@@ -165,7 +172,8 @@ def _choose_tie(plan_id: str) -> None:
 tie_state = st.session_state.get("tie_choice") or {}
 run = agent.run_agent(case, pay_day, priority, injected,
                       confirmed=frozenset(st.session_state.confirmed),
-                      tie_choice=tie_state.get("plan") if tie_state.get("sig") == sig else None)
+                      tie_choice=tie_state.get("plan") if tie_state.get("sig") == sig else None,
+                      stress_delay=stress_delay)
 w = run.winner
 st.session_state.log.append("run_agent", "T0", {"pay_day": pay_day, "priority": priority},
                             None, f"decision: {w.plan.label}")
@@ -235,7 +243,7 @@ c3.metric("Financing cost", f"${fmt(w.financing_cost)}",
 c4.metric("Accept as-is", "breach" if asis.first_breach_day is not None else "ok",
           f"day {asis.first_breach_day}" if asis.first_breach_day is not None else "no breach",
           delta_color="inverse")
-c5.metric("Robust +15d late", "yes" if w.robust else "NO",
+c5.metric(f"Robust +{stress_delay}d late", "yes" if w.robust else "NO",
           f"fails day {w.stress_fail_day}" if w.stress_fail_day else "stress passed",
           delta_color="inverse")
 
@@ -370,7 +378,8 @@ cards = [
         consent=", ".join(filter(None, [
             "customer" if r.depends_on_customer_consent else "",
             "supplier" if r.depends_on_supplier_consent else ""])) or "none",
-        breach=str(r.first_breach_day or r.stress_fail_day or "—"))
+        breach=str(r.first_breach_day or r.stress_fail_day or "—"),
+        stress=run.stress_delay, tolerance=r.tolerance.label if r.tolerance else "—")
     for r in winners]
 cols = st.columns(min(4, len(cards)))
 for col, card_html in zip(cols, cards):
@@ -489,9 +498,9 @@ with s1:
     if run.min_advance and w.plan.advance_pct == 0:
         st.info(f"**Smallest workable advance:** {run.min_advance[0] * 100:.0f}% "
                 f"(${fmt(case.order_value * run.min_advance[0])}) makes accept "
-                f"feasible *and* robust to the 15-day delay.")
+                f"feasible *and* robust to the {stress_delay}-day delay.")
     if w.plan.financing is not None and w.stress_fail_day is not None:
-        shift = engine.minimum_repay_day(case, w.plan.financing, pay_day, agent.STRESS_DELAYS)
+        shift = engine.minimum_repay_day(case, w.plan.financing, pay_day, [stress_delay])
         if shift:
             st.info(f"**Smallest financing change that works:** move repay from "
                     f"day {w.plan.financing.repay_day} to **day {shift}**.")
@@ -501,9 +510,24 @@ with s2:
     st.dataframe(sens_wide, width="stretch", height=60)
     st.caption("Winning plan for each customer payment day (40–90), current priority.")
 
+st.markdown("#### Late-payment stress matrix")
+STRESS_ROWS = ["decline", "accept-as-is"]
+matrix_plans = [w] + [r for r in run.ranked if r.plan.id != w.plan.id][:6] + [
+    run.results[p] for p in STRESS_ROWS if p != w.plan.id]
+st.dataframe(pd.DataFrame([{
+    "Plan": ("★ " if r.plan.id == w.plan.id else "") + r.plan.label,
+    "Tolerance": r.tolerance.label if r.tolerance else "—",
+    **{f"+{d}d": ("✅" if r.tolerance and r.tolerance.survives(d) else "❌")
+       for d in agent.STRESS_OPTIONS},
+} for r in matrix_plans]), hide_index=True, width="stretch")
+st.caption("✅ = reserve holds if the customer pays that many days late. Tolerance is "
+           "found by an exact search over payment days (paying later can only lower "
+           "the balance, so the search is monotone).")
+
 st.markdown("#### Assumptions")
 st.markdown(f"""
-- Customer pays the full \\${fmt(case.order_value)} on **day {pay_day}** (stress: +15 days).
+- Customer pays the full \\${fmt(case.order_value)} (less any advance) on **day {pay_day}**
+  (stress: +{stress_delay} days; matrix: +15/+30/+60/+90).
 - Supplier deposit and pre-delivery payment are deferrable to day 40 **only if** the
   supplier agrees; an advance happens **only if** the customer agrees.
 - Obligations after day 45 (next payroll cycle) are not modelled.

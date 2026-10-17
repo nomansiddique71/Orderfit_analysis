@@ -168,11 +168,14 @@ def _memo_text(run) -> str:
         "min_balance": str(w.min_balance), "min_day": w.min_day,
         "first_breach_day": w.first_breach_day,
         "financing_cost": str(w.financing_cost), "net_margin": str(w.net_margin),
-        "feasible": w.feasible, "robust_to_15day_delay": w.robust,
+        "feasible": w.feasible, "stress_delay_days": run.stress_delay,
+        "robust_to_stress_delay": w.robust,
+        "late_payment_tolerance": w.tolerance.label if w.tolerance else None,
         "stress_fail_day": w.stress_fail_day,
         "runner_ups": [{"plan": r.plan.label, "net_margin": str(r.net_margin),
                         "financing_cost": str(r.financing_cost),
-                        "feasible": r.feasible, "robust": r.robust}
+                        "feasible": r.feasible, "robust": r.robust,
+                        "late_payment_tolerance": r.tolerance.label if r.tolerance else None}
                        for r in run.ranked[1:5]],
         "uncertainty": uncertainty_text(run),
         "open_questions": run.questions,
