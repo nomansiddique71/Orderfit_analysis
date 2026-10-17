@@ -146,7 +146,7 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
 function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boolean; onSubmit: (f: Record<string, string>, p: { label: string; amount: string; day: number; paid: boolean }[]) => void }) {
   const [f, setF] = useState<Record<string, string>>({
     customer_name: "", order_ref: "", order_value: "", delivery_day: "30", payment_terms_days: "30",
-    payment_terms_basis: "after_delivery", supplier_name: "", late_penalty_pct_per_week: "", advance_received: "",
+    payment_terms_basis: "after_delivery", supplier_name: "", late_penalty_pct_per_week: "", advance_received: "", customer_email: "", supplier_email: "",
   });
   const [pays, setPays] = useState([{ label: "Supplier deposit", amount: "", day: 0, paid: false }]);
   const field = (k: string, label: string, ph = "") => (
@@ -160,6 +160,8 @@ function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boole
         {field("order_ref", "Order reference", "PO-1001")}
         {field("order_value", "Order value", "30000")}
         {field("supplier_name", "Supplier", "Brightwave Supplies")}
+        {field("customer_email", "Customer email", "ap@meridianretail.example")}
+        {field("supplier_email", "Supplier email", "accounts@brightwavesupplies.example")}
         {field("delivery_day", "Delivery day", "30")}
         {field("payment_terms_days", "Customer pays after (days)", "30")}
         <label className="block"><span className="label">Counting from</span>

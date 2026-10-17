@@ -70,6 +70,9 @@ def test_fraud_check_options_hold_keeps_block_and_original_account_clears_it():
     assert _analyze(sid)["verdict"]["execution_blocks"]
     client.post("/api/flags/resolve", json={"session_id": sid, "code": "BANK_CHANGE",
                                             "action": "use_original"})
+    assert _analyze(sid)["verdict"]["execution_blocks"] == ["Look-alike supplier email domain"]
+    client.post("/api/flags/resolve", json={"session_id": sid, "code": "LOOKALIKE_DOMAIN",
+                                            "action": "verified_call", "note": "Called on our saved number"})
     assert _analyze(sid)["verdict"]["execution_blocks"] == []
     assert client.post("/api/flags/resolve", json={"session_id": sid, "code": "BANK_CHANGE",
                                                    "action": "made_up"}).status_code == 400

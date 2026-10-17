@@ -209,6 +209,8 @@ def parse_template(docs: list[Document]) -> Facts:
             f.late_penalty_pct_per_week = _find(d, "Late delivery penalty", "Late delivery")
             f.cancellation_clause = _find(d, "Cancellation")
             f.advance_received = _find(d, "Advance received", "Advance paid", "Deposit received")
+            if not f.customer_email.present:
+                f.customer_email = _find(d, "Buyer contact", "Buyer email", "Customer email")
             for m in re.finditer(r"^\s*Item\s*\d+\s*[:\-]\s*(?P<desc>.+?)\s+(?P<amt>(USD|INR|Rs\.?|\$)\s*[\d,\.]+\s*\w*)\s*$",
                                  d.text, re.IGNORECASE | re.MULTILINE):
                 f.line_items.append(LineItem(m.group("desc").strip(),
@@ -223,6 +225,8 @@ def parse_template(docs: list[Document]) -> Facts:
                     Fact(m.group("day"), d.doc_id, span, 0.9)))
         elif d.kind == "invoice":
             f.invoice_amount = _find(d, "Amount due", "Invoice amount", "Total due")
+        if d.kind in ("supplier_quote", "invoice") and not f.supplier_email.present:
+            f.supplier_email = _find(d, "Supplier email", "Email")
         if d.kind in ("supplier_quote", "invoice", "email"):
             acct = _find(d, "Account number", "Account no", "IBAN")
             if acct.present:

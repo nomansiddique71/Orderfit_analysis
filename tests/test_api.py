@@ -72,7 +72,8 @@ def test_fraud_blocks_execution_until_resolved():
     view = _sample(sid, "fraud")
     assert any(f["code"] == "BANK_CHANGE" for f in view["flags"])
     a = _analyze(sid)
-    assert a["verdict"]["execution_blocks"] == ["Supplier bank details changed"]
+    assert a["verdict"]["execution_blocks"] == ["Supplier bank details changed",
+                                                "Look-alike supplier email domain"]
     client.post("/api/approve", json={"session_id": sid, "plan_id": a["verdict"]["winner"]})
     ex = client.post("/api/execute", json={"session_id": sid}).json()
     assert not ex["ok"] and "fraud" in ex["steps"][0].lower()
@@ -80,6 +81,9 @@ def test_fraud_blocks_execution_until_resolved():
                                                    "note": "x"}).status_code == 400  # too short
     client.post("/api/flags/resolve", json={"session_id": sid, "code": "BANK_CHANGE",
                                             "note": "Called Brightwave on the number we had"})
+    assert _analyze(sid)["verdict"]["execution_blocks"] == ["Look-alike supplier email domain"]
+    client.post("/api/flags/resolve", json={"session_id": sid, "code": "LOOKALIKE_DOMAIN",
+                                            "action": "use_known"})
     a = _analyze(sid)
     assert a["verdict"]["execution_blocks"] == []
     client.post("/api/approve", json={"session_id": sid, "plan_id": a["verdict"]["winner"]})

@@ -25,6 +25,7 @@
     "story": "The supplier's invoice and a pressure email point to a different bank account than the quote. Classic payment-diversion fraud.",
     "look_for": [
       "Critical fraud flag: supplier bank details changed",
+      "Invoice email uses a look-alike domain (supp1ies with a digit 1)",
       "Pressure wording ('urgent', 'do not call') flagged",
       "All sandbox payments blocked until you record a call-back check"
     ],

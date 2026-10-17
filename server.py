@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 
 import agent
 import case_builder
+import company_check
 import doc_extract
 import engine
 import gemini_client
@@ -192,6 +193,14 @@ FLAG_OPTIONS: dict[str, list[tuple[str, str, bool, bool]]] = {
                           ("verify_sender", "Verify the sender by phone first", True, False)],
     "EMAIL_CONFLICT": [("verify_sender", "Verify the sender by phone first", True, False),
                        ("use_documents", "Trust the formal documents, not the email", True, False)],
+    "LOOKALIKE_DOMAIN": [_VERIFY,
+                         ("use_known", "Only use contact and bank details from the quote's known domain",
+                          True, False),
+                         ("hold", "Hold every payment until I can verify", False, False),
+                         ("report", "Treat it as fraud: report it and do not pay", False, False)],
+    "FREE_EMAIL": [("verify_sender", "Verify the contact by phone first", True, False),
+                   ("ask_company_email", "Ask them to write from their company domain", True, False),
+                   ("known_contact", "I know this contact personally; it is fine", True, True)],
     "INJECTION": [("ignore", "Ignore the hidden instruction (SolvOrder already does)", True, False),
                   ("report", "Tell the sender their document contains an AI instruction", True, False)],
 }
@@ -325,7 +334,8 @@ def _warm_samples() -> None:
     Off with SOLVORDER_WARM_SAMPLES=0; skipped when Gemini is not configured."""
     for meta in _packs():
         try:
-            doc_extract.extract_facts(_sample_docs(meta))
+            facts, _, _ = doc_extract.extract_facts(_sample_docs(meta))
+            company_check.google_check(company_check.parties(facts))
         except Exception as exc:  # warm-up is best effort; the request path retries
             print(f"[warm-up] sample {meta['id']} failed: {exc}", flush=True)
 
@@ -395,6 +405,37 @@ def manual(req: ManualReq):
     s.last, s.approvals, s.active_approval, s.executed, s.resolved = {}, {}, None, None, {}
     s.log.append("manual_entry", "T0", {"fields": len(req.facts)}, None, "owner-entered facts")
     return _documents_view(s)
+
+
+class SessionReq(BaseModel):
+    session_id: str
+
+
+@app.post("/api/companies")
+def companies(req: SessionReq):
+    """Who are we dealing with: rule checks on each company's email, plus an optional
+    Google check through Gemini with Search grounding (SOLVORDER_GOOGLE_SEARCH=1)."""
+    s = _session(req.session_id)
+    if s.facts is None:
+        raise HTTPException(400, "Load a sample or upload documents first.")
+    ps = company_check.parties(s.facts)
+    g = company_check.google_check(ps)
+    if g["mode"] != "off" and ("companies", g.get("note")) not in s.ai_cache:
+        s.ai_cache[("companies", g.get("note"))] = True
+        s.log.append("gemini.google_search", "T1", {"companies": [p.company for p in ps]}, None,
+                     f"company web check: {g['mode']}")
+    lookalikes = [f[3].split(",")[0] for f in company_check.domain_flags(s.facts, s.docs)
+                  if f[0] == "LOOKALIKE_DOMAIN"]
+
+    def rules(p):
+        out = company_check.rule_checks(p)
+        if p.role == "supplier":
+            out += [{"kind": "bad", "text": t} for t in lookalikes]
+        return out
+
+    return {"parties": [{**p.to_json(), "rules": rules(p),
+                         "google": g["results"].get(p.role)} for p in ps],
+            "mode": g["mode"], "note": g["note"], "sources": g.get("sources", [])}
 
 
 BUSINESS_MISSING = "Your business details (cash today, reserve, regular payments)"
@@ -847,10 +888,6 @@ def approve(req: ApproveReq):
     return {"approval": _approval_json(s)}
 
 
-class SessionReq(BaseModel):
-    session_id: str
-
-
 @app.post("/api/execute")
 def execute(req: SessionReq):
     s = _session(req.session_id)
@@ -958,6 +995,7 @@ TOOL_TEXT = {
     "gemini.explain": "Gemini explained the decision", "gemini.ask": "Gemini answered a question",
     "gemini.polish": "Gemini reworded a message (numbers checked)",
     "gemini.what_else_needed": "Gemini chose the intake questions",
+    "gemini.google_search": "Gemini searched Google for the companies",
     "smtp.send": "Tried to send a REAL email", "bank.live_transfer": "Tried a LIVE bank transfer",
     "lender.create_terms": "Tried to invent loan terms", "documents.edit": "Tried to edit a source document",
 }

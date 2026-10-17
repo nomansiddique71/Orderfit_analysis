@@ -78,6 +78,8 @@ class Facts:
     supplier_name: Fact = field(default_factory=lambda: Fact(""))
     invoice_amount: Fact = field(default_factory=lambda: Fact(""))
     advance_received: Fact = field(default_factory=lambda: Fact(""))  # customer advance already paid
+    customer_email: Fact = field(default_factory=lambda: Fact(""))
+    supplier_email: Fact = field(default_factory=lambda: Fact(""))
     supplier_payments: list[SupplierPayment] = field(default_factory=list)
     line_items: list[LineItem] = field(default_factory=list)
     bank_details: list[BankDetail] = field(default_factory=list)
@@ -87,7 +89,7 @@ class Facts:
     SCALAR_FIELDS = (
         "customer_name", "order_ref", "order_value", "delivery_day", "payment_terms_days",
         "payment_terms_basis", "late_penalty_pct_per_week", "cancellation_clause",
-        "supplier_name", "invoice_amount", "advance_received",
+        "supplier_name", "invoice_amount", "advance_received", "customer_email", "supplier_email",
     )
 
     def scalars(self) -> dict[str, Fact]:
@@ -107,6 +109,8 @@ FACT_LABELS = {
     "supplier_name": "Supplier",
     "invoice_amount": "Supplier invoice amount",
     "advance_received": "Advance already received from the customer",
+    "customer_email": "Customer email",
+    "supplier_email": "Supplier email",
 }
 
 # Facts that change a dated cash movement or a hard constraint: a

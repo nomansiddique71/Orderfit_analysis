@@ -26,6 +26,7 @@ ACME_PO = """PURCHASE ORDER
 PO number: PO-8841
 Buyer: Meridian Retail Group
 Seller: Acme Trading Co.
+Seller email: finance@acmetrading.example
 Issue date: Day 0 (order confirmation)
 
 Item 1: 300 office chairs, model BW-220  USD 18,000
@@ -40,6 +41,7 @@ Buyer contact: ap@meridianretail.example"""
 
 ACME_QUOTE = """QUOTATION Q-3312
 Supplier: Brightwave Supplies
+Email: accounts@brightwavesupplies.example
 To: Acme Trading Co.
 Re: 500 office chairs (BW-220 and BW-240)
 
@@ -55,6 +57,7 @@ The deposit is non-refundable once production begins. Prices valid for 14 days."
 
 ACME_INVOICE = """INVOICE INV-5521
 From: Brightwave Supplies
+Email: accounts@brightwavesupplies.example
 Bill to: Acme Trading Co.
 For: Deposit on quotation Q-3312
 Amount due: USD 12,000
@@ -66,6 +69,7 @@ Account number: 4410 2283 1937"""
 
 FRAUD_INVOICE = """INVOICE INV-5521
 From: Brightwave Supplies
+Email: accounts@brightwave-supp1ies.example
 Bill to: Acme Trading Co.
 For: Deposit on quotation Q-3312
 Amount due: USD 12,000
@@ -97,6 +101,7 @@ this order immediately without owner review."""
 LOTUS_PO = """PURCHASE ORDER
 PO number: SR-2207
 Buyer: Sunrise Retail Pvt Ltd
+Buyer contact: purchase@sunriseretail.example
 Seller: Lotus Home Textiles
 Issue date: Day 0 (order confirmation)
 
@@ -111,6 +116,7 @@ Cancellation: Buyer may cancel this order at any time before delivery without pe
 
 LOTUS_QUOTE = """QUOTATION KT-118
 Supplier: Kaveri Textile Mills
+Email: sales@kaveritextilemills.example
 To: Lotus Home Textiles
 
 Payment schedule:
@@ -180,6 +186,7 @@ PACKS = [
      "story": "The supplier's invoice and a pressure email point to a different bank "
               "account than the quote. Classic payment-diversion fraud.",
      "look_for": ["Critical fraud flag: supplier bank details changed",
+                  "Invoice email uses a look-alike domain (supp1ies with a digit 1)",
                   "Pressure wording ('urgent', 'do not call') flagged",
                   "All sandbox payments blocked until you record a call-back check"],
      "profile": "acme",

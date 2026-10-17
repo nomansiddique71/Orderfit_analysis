@@ -82,11 +82,12 @@ def test_fraud_pack_flags_bank_change_and_blocks_execution():
     assert flags["BANK_CHANGE"].severity == "critical" and flags["BANK_CHANGE"].blocks_execution
     assert "****4821" in flags["BANK_CHANGE"].message and "****1937" in flags["BANK_CHANGE"].message
     assert "PRESSURE_LANGUAGE" in flags
+    assert flags["LOOKALIKE_DOMAIN"].blocks_execution and "supp1ies" in flags["LOOKALIKE_DOMAIN"].message
     docs, facts, mode, profile = _load("fraud")
     built = case_builder.build_case(facts, profile)
     run = agent.run_agent(built.case, built.customer_payment_day, "maximize_margin", False,
                           documents=stage)
-    assert run.execution_blocks == ["Supplier bank details changed"]
+    assert run.execution_blocks == ["Supplier bank details changed", "Look-alike supplier email domain"]
 
 
 def test_resolving_fraud_flag_unblocks():

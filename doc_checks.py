@@ -17,6 +17,8 @@ Checks
   EMAIL_CONFLICT    an email states terms that differ from the order (D-06)
   PRESSURE_LANGUAGE urgency / secrecy / "new account" wording in an email
   INJECTION         instruction addressed to the AI found in a document
+  LOOKALIKE_DOMAIN  supplier document from a near-identical email domain (company_check)
+  FREE_EMAIL        a company writing from free webmail (company_check)
 """
 
 from __future__ import annotations
@@ -62,6 +64,11 @@ def check_integrity(facts: Facts, docs: list[Document]) -> list[IntegrityFlag]:
     flags += _amount_checks(facts, by_id)
     flags += _terms_checks(facts, by_id)
     flags += _email_checks(facts, docs)
+    from company_check import domain_flags
+
+    for code, sev, title, msg, docs_, blocks in domain_flags(facts, docs):
+        flags.append(IntegrityFlag(code, sev, title, msg, docs_, blocks_execution=blocks,
+                                   category="fraud"))
     for doc_id, span in facts.instructions_found:
         flags.append(IntegrityFlag(
             "INJECTION", "critical", "Instruction to the AI found in a document",
