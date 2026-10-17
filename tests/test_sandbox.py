@@ -14,7 +14,7 @@ from sandbox import OVERRIDE_TAG, Approval  # noqa: E402
 def _env():
     log = sandbox.OperationLog()
     return (log, sandbox.PermissionGate(log), sandbox.SimulatedBank(),
-            sandbox.MockOutbox(), sandbox.MockLenderPortal({f.id for f in CASE.financing_offers}))
+            sandbox.MockOutbox(), sandbox.MockLenderPortal({f.id: f for f in CASE.financing_offers}))
 
 
 def _run():

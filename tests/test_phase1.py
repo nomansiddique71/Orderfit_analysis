@@ -139,17 +139,19 @@ def test_near_tie_detected_and_owner_choice_wins():
     case = replace(CASE, reserve=D("5000"))
     run = agent.run_agent(case, 60, "avoid_customer_consent", False)
     top, other = run.near_tie
-    # OFF-2 costs 500 and the OFF-3 credit line 640: 140 apart, inside 1% of 30,000
-    # (= 300). OFF-3 lends 12,000 vs 10,000, so its day-45 low is 7,500 vs 5,500.
-    assert top.plan.id == "adv0_ext0_OFF-2" and other.plan.id == "adv0_ext0_OFF-3"
+    # OFF-2 costs 500. The minimum safe OFF-3 loan is 9,500 (-4,500 + P >= 5,000 on
+    # day 45), costing 9,500 x 1.5% x 3 months + 100 = 527.50: 27.50 apart, inside
+    # 1% of 30,000 (= 300). OFF-2 fails the 15-day stress (repays day 61); the
+    # sized loan (repaid day 90) survives it.
+    assert top.plan.id == "adv0_ext0_OFF-2" and other.plan.id == "minloan_OFF-3"
     assert run.winner.plan.id == "adv0_ext0_OFF-2"
-    assert "higher net margin (+140)" in agent.plan_strengths(top, other)
-    assert any("more cash headroom" in s for s in agent.plan_strengths(other, top))
+    assert "higher net margin (+28)" in agent.plan_strengths(top, other)
+    assert agent.plan_strengths(other, top) == ["survives the late-payment stress"]
 
     chosen = agent.run_agent(case, 60, "avoid_customer_consent", False,
-                             tie_choice="adv0_ext0_OFF-3")
-    assert chosen.winner.plan.id == "adv0_ext0_OFF-3"
-    assert chosen.owner_tie_choice == "adv0_ext0_OFF-3"
+                             tie_choice="minloan_OFF-3")
+    assert chosen.winner.plan.id == "minloan_OFF-3"
+    assert chosen.owner_tie_choice == "minloan_OFF-3"
     # a choice outside the tied pair is ignored
     bogus = agent.run_agent(case, 60, "avoid_customer_consent", False, tie_choice="decline")
     assert bogus.winner.plan.id == "adv0_ext0_OFF-2"

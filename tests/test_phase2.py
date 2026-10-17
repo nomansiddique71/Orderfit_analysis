@@ -128,3 +128,41 @@ def test_default_acme_most_robust():
     import agent
     run = agent.run_agent(CASE, 60, "most_robust", False)
     assert run.winner.plan.id == "adv50_ext0_nofin"  # never-pays-safe and free
+
+
+# ------------------------------------------------------ minimum safe loan
+
+
+def test_minimum_safe_loan_acme_off3():
+    # As-is with the customer 15 days late (day 75): day-45 low is -4,500, so the
+    # loan must be >= 12,500 to keep 8,000. Repaid day 90, after the late payment.
+    offer = {o.id: o for o in CASE.financing_offers}["OFF-3"]
+    principal, r = engine.minimum_safe_loan(CASE, offer, 60, 15)
+    assert principal == D("12500")
+    assert r.financing_cost == D("662.50")  # 12,500 x 1.5% x 3 + 100
+    assert r.robust and r.min_balance == D("8000.00")
+    # one step smaller fails
+    smaller = offer.with_principal(D("12000"))
+    assert not engine.simulate(CASE, engine.Plan("p", "p", D(0), False, smaller), 60, [15]).robust
+
+
+def test_minimum_safe_loan_none_within_limits():
+    # 12,500 is needed (see above); a lender capped at 12,000 cannot make it work.
+    offer = {o.id: o for o in CASE.financing_offers}["OFF-3"]
+    tight = replace(offer, max_principal=D("12000"))
+    assert engine.minimum_safe_loan(CASE, tight, 60, 15) is None
+
+
+def test_minimum_safe_loan_offered_as_plan_and_portal_checks_range():
+    import agent
+    import sandbox
+    run = agent.run_agent(CASE, 60, "maximize_margin", False)
+    assert "minloan_OFF-3" in run.results
+    portal = sandbox.MockLenderPortal({o.id: o for o in CASE.financing_offers})
+    f = run.results["minloan_OFF-3"].plan.financing
+    terms = {"principal": str(f.principal), "fee_pct": str(f.fee_pct),
+             "origination": str(f.origination), "monthly_rate_pct": str(f.monthly_rate_pct),
+             "draw_day": f.draw_day, "repay_day": f.repay_day}
+    assert portal.accept("OFF-3", terms)[0]
+    assert not portal.accept("OFF-3", {**terms, "principal": "25000"})[0]  # above max
+    assert not portal.accept("OFF-3", {**terms, "monthly_rate_pct": "0.5"})[0]  # invented rate

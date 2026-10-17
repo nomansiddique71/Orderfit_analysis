@@ -412,6 +412,8 @@ class AgentRun:
     near_tie: tuple[SimulationResult, SimulationResult] | None = None
     owner_tie_choice: str | None = None  # plan id the owner picked to break a near tie
     stress_delay: int = STRESS_DELAYS[0]  # the delay that defines "robust"
+    # per sizeable offer: (offer, principal or None, result or None) -- R-08 suggestion
+    min_safe_loans: list = field(default_factory=list)
 
     @property
     def provisional(self) -> bool:
@@ -458,6 +460,18 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
     # Stage C -- simulation for every candidate plan, base + stress
     plans = engine.enumerate_plans(case)
     results = simulate_all(case, plans, customer_payment_day, stress, with_tolerance=True)
+    # R-08: for every lender that quotes a principal range, size the smallest
+    # loan that survives the chosen stress and add it as a candidate plan.
+    min_safe_loans = []
+    for offer in engine.eligible_offers(case):
+        found = engine.minimum_safe_loan(case, offer, customer_payment_day, stress_delay)
+        if offer.sizeable:
+            min_safe_loans.append((offer, found[0] if found else None,
+                                   found[1] if found else None))
+        if found and found[0] != offer.principal:
+            r = found[1]
+            r.tolerance = engine.delay_tolerance(case, r.plan, customer_payment_day)
+            results[r.plan.id] = r
     log.append(("C", "Cash-flow simulation",
                 f"{len(plans)} plans simulated for customer payment on day "
                 f"{customer_payment_day}, plus a +{stress_delay}-day late-payment "
@@ -521,6 +535,7 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
         questions=questions, extraction_mode=extraction_mode,
         extraction_note=extraction_note, provisional_fields=provisional_fields,
         near_tie=near_tie, owner_tie_choice=owner_tie_choice, stress_delay=stress_delay,
+        min_safe_loans=min_safe_loans,
     )
 
 

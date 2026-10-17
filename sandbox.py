@@ -133,15 +133,30 @@ class MockOutbox:
 
 
 class MockLenderPortal:
-    """Accepts only terms that exist verbatim in the supplied catalogue."""
+    """Accepts only terms that match the supplied catalogue.
 
-    def __init__(self, catalogue_ids: set[str]) -> None:
-        self.catalogue_ids = catalogue_ids
+    Rate, fees and dates must equal the catalogue offer exactly; the principal
+    must equal the quoted one or lie within the lender's own min/max range.
+    """
+
+    def __init__(self, catalogue: dict) -> None:
+        self.catalogue = catalogue  # offer id -> engine.FinancingOffer
         self.accepted: list[dict] = []
 
     def accept(self, offer_id: str, terms: dict) -> tuple[bool, str]:
-        if offer_id not in self.catalogue_ids:
+        offer = self.catalogue.get(offer_id)
+        if offer is None:
             return False, f"terms for {offer_id} not in catalogue -- rejected"
+        fixed = {"fee_pct": str(offer.fee_pct), "origination": str(offer.origination),
+                 "monthly_rate_pct": str(offer.monthly_rate_pct),
+                 "draw_day": offer.draw_day, "repay_day": offer.repay_day}
+        changed = [k for k, v in fixed.items() if terms.get(k) != v]
+        if changed:
+            return False, f"terms for {offer_id} differ from catalogue ({', '.join(changed)}) -- rejected"
+        principal = Decimal(str(terms.get("principal")))
+        in_range = (offer.sizeable and offer.min_principal <= principal <= offer.max_principal)
+        if principal != offer.principal and not in_range:
+            return False, f"principal {principal:,.0f} not allowed for {offer_id} -- rejected"
         self.accepted.append({"offer": offer_id, "terms": terms,
                               "status": "accepted (mock)"})
         return True, "accepted"

@@ -484,6 +484,32 @@ def minimum_advance(case: Case, customer_payment_day: int, stress_delays: list[i
     return None
 
 
+def minimum_safe_loan(case: Case, offer: FinancingOffer, customer_payment_day: int,
+                      stress_delay: int, advance_pct: Decimal = ZERO,
+                      supplier_extension: bool = False
+                      ) -> tuple[Decimal, SimulationResult] | None:
+    """Smallest principal, within the lender's own limits and step, that keeps the
+    reserve on time AND when the customer pays `stress_delay` days late (R-08).
+
+    Only the principal changes; rate, fees and dates stay exactly as quoted.
+    Returns None if no allowed principal works (or the offer is not sizeable).
+    """
+    if not offer.sizeable:
+        return None
+    principal = offer.min_principal
+    while principal <= offer.max_principal:
+        sized = offer.with_principal(principal)
+        plan = Plan(f"minloan_{offer.id}" + (f"_adv{int(advance_pct * 100)}" if advance_pct else ""),
+                    f"Accept: {offer.lender} loan of {principal:,.0f} (minimum safe)"
+                    + (f" + {advance_pct * 100:.0f}% advance" if advance_pct else ""),
+                    advance_pct, supplier_extension, sized)
+        r = simulate(case, plan, customer_payment_day, [stress_delay])
+        if r.robust:
+            return principal, r
+        principal += offer.principal_step
+    return None
+
+
 def minimum_repay_day(case: Case, offer: FinancingOffer, customer_payment_day: int,
                       stress_delays: list[int]) -> int | None:
     """Eardest repay day (scan forward) at which the offer becomes robust."""

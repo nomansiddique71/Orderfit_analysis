@@ -145,7 +145,7 @@ if st.session_state.get("sig") != sig:
     st.session_state.gate = PermissionGate(st.session_state.log)
     st.session_state.bank = SimulatedBank()
     st.session_state.outbox = MockOutbox()
-    st.session_state.portal = MockLenderPortal({f.id for f in CASE.financing_offers})
+    st.session_state.portal = MockLenderPortal({f.id: f for f in CASE.financing_offers})
     st.session_state.approvals = {}
     st.session_state.executed: ExecutionReport | None = None
 
@@ -500,6 +500,17 @@ with s1:
         st.info(f"**Smallest workable advance:** {run.min_advance[0] * 100:.0f}% "
                 f"(${fmt(case.order_value * run.min_advance[0])}) makes accept "
                 f"feasible *and* robust to the {stress_delay}-day delay.")
+    for offer, principal, lr in run.min_safe_loans:
+        if principal is not None:
+            st.info(f"**Minimum safe loan ({offer.lender}, {offer.id}):** "
+                    f"${fmt(principal)} at {offer.terms_text()} costs "
+                    f"**${lr.financing_cost:,.2f}** and keeps the reserve even if the "
+                    f"customer pays {stress_delay} days late (tolerance: "
+                    f"{lr.tolerance.label if lr.tolerance else '—'}).")
+        else:
+            st.warning(f"**Minimum safe loan ({offer.lender}, {offer.id}):** no principal "
+                       f"between ${fmt(offer.min_principal)} and ${fmt(offer.max_principal)} "
+                       f"keeps the reserve with a {stress_delay}-day late payment.")
     if w.plan.financing is not None and w.stress_fail_day is not None:
         shift = engine.minimum_repay_day(case, w.plan.financing, pay_day, [stress_delay])
         if shift:
