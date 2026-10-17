@@ -576,14 +576,16 @@ def rank_plans(results: list[SimulationResult], case: Case,
 
 
 def minimum_advance(case: Case, customer_payment_day: int, stress_delays: list[int],
-                    step_pct: int = 5) -> tuple[Decimal, SimulationResult] | None:
-    """Smallest customer advance (as-is otherwise) that is feasible AND robust."""
+                    step_pct: int = 5, require_robust: bool = True
+                    ) -> tuple[Decimal, SimulationResult] | None:
+    """Smallest customer advance (as-is otherwise) that is feasible AND robust
+    (or merely feasible on time, with require_robust=False)."""
     pct = D(step_pct) / 100
     while pct <= 1:
         plan = Plan(f"minadv{int(pct * 100)}", f"Accept with {pct * 100:.0f}% advance",
                     pct, False, None)
         r = simulate(case, plan, customer_payment_day, stress_delays)
-        if r.robust:
+        if r.robust if require_robust else r.feasible:
             return pct, r
         pct += D(step_pct) / 100
     return None

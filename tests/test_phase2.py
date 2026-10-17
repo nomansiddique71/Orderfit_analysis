@@ -203,3 +203,30 @@ def test_money_at_risk_by_cancellation_day():
     # the 15,000 advance covers the deposit; risk starts with the day-20 payment
     assert engine.money_at_risk(CASE, _plan("adv50_ext0_nofin")) == [
         (0, D("0")), (20, D("2000.00")), (30, D("3500.00"))]
+
+
+# ------------------------------------------------------ no plan survives
+
+
+def test_no_plan_survives_recommends_decline_and_smallest_change():
+    import agent
+    # reserve 11,000 and no financing allowed: 50% advance bottoms at 10,500 < 11,000.
+    case = replace(CASE, reserve=D("11000"), max_financing_cost=D("0"))
+    run = agent.run_agent(case, 60, "maximize_margin", False)
+    assert run.no_plan_survives and run.winner.plan.id == "decline"
+    assert agent.uncertainty_rating(run)[0] == "HIGH"
+    # 55% advance: -4,500 + 16,500 = 12,000 on day 45 >= 11,000 (50% gives 10,500)
+    assert run.smallest_changes[0].startswith("Ask the customer for a 55% advance (16,500)")
+    assert "lowest balance becomes 12,000 on day 45" in run.smallest_changes[0]
+
+
+def test_no_plan_survives_names_the_hard_constraint():
+    import agent
+    run = agent.run_agent(replace(CASE, delivery_day=35), 60, "maximize_margin", False)
+    assert run.no_plan_survives
+    assert any("misses the required day 30" in c for c in run.smallest_changes)
+
+
+def test_default_acme_has_surviving_plans():
+    import agent
+    assert not agent.run_agent(CASE, 60, "maximize_margin", False).no_plan_survives

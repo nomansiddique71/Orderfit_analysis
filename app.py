@@ -271,6 +271,18 @@ chips = "  ".join(
 st.markdown(f"<div style='margin:10px 0 0'>{chips}</div>", unsafe_allow_html=True)
 st.divider()
 
+if run.no_plan_survives:
+    with st.container(border=True):
+        st.error("**No plan survives.** No way of accepting this order keeps the "
+                 f"${fmt(case.reserve)} reserve and every hard constraint. "
+                 + ("Recommendation: **decline**, or renegotiate." if w.feasible else
+                    f"Even declining breaches the reserve on day {w.first_breach_day} — "
+                    f"the cash problem exists without this order."), icon="🛑")
+        st.markdown("**Smallest change that would make a plan work** "
+                    "(each figure re-checked by the engine):")
+        for c in run.smallest_changes:
+            st.markdown(f"- {c}")
+
 if run.priority_conflict:
     st.error(f"**Priority conflict — escalated.** No feasible plan satisfies "
              f"'{PRIORITY_LABELS[priority]}'. The best feasible plan "

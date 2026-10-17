@@ -342,6 +342,43 @@ def _overdue_alerts(case: Case, as_is: SimulationResult, winner: SimulationResul
     return out
 
 
+# ------------------------------------------------- no plan survives (X-08)
+
+
+def smallest_changes_needed(case: Case, pay_day: int, stress_delay: int,
+                            as_is: SimulationResult) -> list[str]:
+    """Plain-language list of the smallest single change that would make
+    accepting work. Every figure comes from an engine re-run, never estimated."""
+    out: list[str] = []
+    adv = engine.minimum_advance(case, pay_day, [stress_delay], require_robust=False)
+    if adv:
+        pct, r = adv
+        robust = engine.minimum_advance(case, pay_day, [stress_delay])
+        out.append(f"Ask the customer for a {pct * 100:.0f}% advance "
+                   f"({case.order_value * pct:,.0f}) on confirmation: lowest balance "
+                   f"becomes {r.min_balance:,.0f} on day {r.min_day}"
+                   + (f"; {robust[0] * 100:.0f}% also survives a {stress_delay}-day "
+                      f"late payment." if robust else "."))
+    for offer in engine.eligible_offers(case):
+        loan = engine.minimum_safe_loan(case, offer, pay_day, 0)
+        if loan:
+            p, r = loan
+            if r.violations:
+                continue
+            out.append(f"Borrow {p:,.0f} from {offer.lender} ({offer.id}, "
+                       f"{offer.terms_text()}): cost {r.financing_cost:,.2f}.")
+    if as_is.first_breach_day is not None and not as_is.violations:
+        out.append(f"Or accept a lower reserve: as-is falls {case.reserve - as_is.min_balance:,.0f} "
+                   f"short of the {case.reserve:,.0f} reserve (low {as_is.min_balance:,.0f} "
+                   f"on day {as_is.min_day}). Only the owner can decide this.")
+    if as_is.violations:
+        out.append("Renegotiate the term that breaks a hard constraint: "
+                   + " ".join(as_is.violations))
+    if not out:
+        out.append("No single change within the supplied options makes the order work.")
+    return out
+
+
 # ------------------------------------------------------------- scenarios
 
 
@@ -438,6 +475,9 @@ class AgentRun:
     stress_delay: int = STRESS_DELAYS[0]  # the delay that defines "robust"
     # per sizeable offer: (offer, principal or None, result or None) -- R-08 suggestion
     min_safe_loans: list = field(default_factory=list)
+    # X-08 / P-02: no accept plan keeps the reserve and the hard constraints
+    no_plan_survives: bool = False
+    smallest_changes: list[str] = field(default_factory=list)
 
     @property
     def provisional(self) -> bool:
@@ -540,6 +580,13 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
                 f"first flip at day {flip_day if flip_day is not None else '-'}."))
 
     min_advance = engine.minimum_advance(case, customer_payment_day, stress)
+    no_plan_survives = not any(r.feasible for r in results.values() if r.plan.id != "decline")
+    smallest_changes = (smallest_changes_needed(case, customer_payment_day, stress_delay, as_is)
+                        if no_plan_survives else [])
+    if no_plan_survives:
+        log.append(("D", "No plan survives",
+                    "No accept plan keeps the reserve and the hard constraints. "
+                    "Recommending decline or renegotiation."))
     alerts = raise_alerts(case, as_is, winner, results, customer_payment_day, stress_delay)
     for f in provisional_fields:
         alerts.insert(0, Alert(
@@ -559,7 +606,8 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
         questions=questions, extraction_mode=extraction_mode,
         extraction_note=extraction_note, provisional_fields=provisional_fields,
         near_tie=near_tie, owner_tie_choice=owner_tie_choice, stress_delay=stress_delay,
-        min_safe_loans=min_safe_loans,
+        min_safe_loans=min_safe_loans, no_plan_survives=no_plan_survives,
+        smallest_changes=smallest_changes,
     )
 
 
@@ -605,6 +653,14 @@ def uncertainty_rating(run: AgentRun) -> tuple[str, str]:
 
 
 def _base_uncertainty(run: AgentRun) -> tuple[str, str]:
+    if run.no_plan_survives:
+        if not run.winner.feasible:
+            return ("HIGH", f"No plan works -- even declining breaches the reserve on day "
+                            f"{run.winner.first_breach_day}. The cash problem exists "
+                            f"without this order. Escalated.")
+        return ("HIGH", "No way to accept this order keeps the reserve and the hard "
+                        "constraints. Recommend declining, or renegotiating one of the "
+                        "smallest changes listed.")
     w = run.winner
     if run.priority_conflict:
         return ("HIGH", "The owner's priority conflicts with every feasible plan. "

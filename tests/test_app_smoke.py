@@ -83,3 +83,10 @@ def test_stress_selector_and_matrix_render():
     next(s for s in at.select_slider if s.label.startswith("Late-payment stress")).set_value(60).run()
     assert not at.exception, at.exception
     assert any("Late-payment stress matrix" in m.value for m in at.markdown)
+
+
+def test_no_plan_survives_banner():
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
+    at.run()
+    next(s for s in at.slider if s.label == "Supplier delivery day").set_value(35).run()
+    assert any("No plan survives" in e.value for e in at.error)
