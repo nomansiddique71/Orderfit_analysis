@@ -19,7 +19,7 @@ export interface Profile {
 }
 export interface DocView {
   mode: string; note: string; sample_id: string | null; documents: DocInfo[]; facts: Fact[];
-  supplier_payments: { label: string; amount: Fact; day: Fact }[];
+  supplier_payments: { label: string; amount: Fact; day: Fact; paid: boolean }[];
   line_items: { description: string; amount: string; source: string }[];
   bank_details: { source: string; payee: string; bank: string; account: string; verified: boolean }[];
   flags: Flag[]; profile: Profile | null;

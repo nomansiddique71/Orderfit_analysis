@@ -158,10 +158,22 @@ class Case:
     customer: str = "Meridian Retail Group"
     order_ref: str = "PO-8841"
     late_penalty_pct_per_week: Decimal = D("0")  # from the PO: % of order value per week late
+    # Money that already moved before today, so it is already in (or out of)
+    # opening_cash: an advance the customer paid, and order costs already paid
+    # to the supplier. Neither is a future movement, but both count for margin.
+    advance_received: Decimal = D("0")
+    costs_already_paid: Decimal = D("0")
+    currency: str = "USD"  # used only in human-readable text (drafts)
+
+    @property
+    def balance_due(self) -> Decimal:
+        """What the customer still owes for the order."""
+        return self.order_value - self.advance_received
 
     @property
     def gross_margin(self) -> Decimal:
-        return self.order_value - sum((-m.amount for m in self.order_costs), ZERO)
+        return (self.order_value - self.costs_already_paid
+                - sum((-m.amount for m in self.order_costs), ZERO))
 
 
 @dataclass(frozen=True)
@@ -260,10 +272,12 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None,
         else:
             out.append(m)
     # The advance is part of the order value, not extra money: the customer's
-    # final payment is the order value minus whatever was paid up front.
-    advance = money(case.order_value * plan.advance_pct)
+    # final payment is what they still owe minus whatever the plan asks up front.
+    # A plan's advance % applies to the balance still owed (all of the order
+    # value unless the customer already paid an advance).
+    advance = money(case.balance_due * plan.advance_pct)
     if customer_payment_day is not None:
-        due = case.order_value - advance
+        due = case.balance_due - advance
         if scenario.payment_fraction != 1:
             due = money(due * scenario.payment_fraction)
         due -= late_delivery_penalty(case, scenario.supplier_delay_days)
@@ -447,8 +461,10 @@ def money_at_risk(case: Case, plan: Plan) -> list[tuple[int, Decimal]]:
     if plan.id == "decline":
         return []
     movs = plan_movements(case, plan, None)
-    advance = sum((m.amount for m in movs if m.kind == "advance"), ZERO)
-    out, spent = [], ZERO
+    advance = case.advance_received + sum((m.amount for m in movs if m.kind == "advance"), ZERO)
+    out, spent = [], case.costs_already_paid
+    if spent > 0:
+        out.append((0, max(spent - advance, ZERO)))
     for day in sorted({m.day for m in movs if m.kind == "order_cost"}):
         spent += sum((-m.amount for m in movs if m.kind == "order_cost" and m.day == day), ZERO)
         out.append((day, max(spent - advance, ZERO)))

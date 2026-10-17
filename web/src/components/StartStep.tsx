@@ -143,12 +143,12 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
   );
 }
 
-function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boolean; onSubmit: (f: Record<string, string>, p: { label: string; amount: string; day: number }[]) => void }) {
+function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boolean; onSubmit: (f: Record<string, string>, p: { label: string; amount: string; day: number; paid: boolean }[]) => void }) {
   const [f, setF] = useState<Record<string, string>>({
     customer_name: "", order_ref: "", order_value: "", delivery_day: "30", payment_terms_days: "30",
-    payment_terms_basis: "after_delivery", supplier_name: "", late_penalty_pct_per_week: "",
+    payment_terms_basis: "after_delivery", supplier_name: "", late_penalty_pct_per_week: "", advance_received: "",
   });
-  const [pays, setPays] = useState([{ label: "Supplier deposit", amount: "", day: 0 }]);
+  const [pays, setPays] = useState([{ label: "Supplier deposit", amount: "", day: 0, paid: false }]);
   const field = (k: string, label: string, ph = "") => (
     <label className="block"><span className="label">{label}</span>
       <input className="input mt-1" value={f[k]} placeholder={ph} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></label>
@@ -167,18 +167,20 @@ function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boole
             <option value="after_delivery">Delivery</option><option value="after_invoice">Invoice</option><option value="after_order">Order date</option>
           </select></label>
         {field("late_penalty_pct_per_week", "Late penalty % / week", "1%")}
+        {field("advance_received", "Advance the customer already paid you", "0 if none")}
       </div>
       <div>
-        <div className="label mb-1">What you pay the supplier (amount, day)</div>
+        <div className="label mb-1">What you pay the supplier (amount, day, already paid?)</div>
         {pays.map((p, i) => (
-          <div key={i} className="mb-2 grid grid-cols-[1fr_110px_80px_32px] gap-2">
+          <div key={i} className="mb-2 grid grid-cols-[1fr_110px_80px_auto_32px] items-center gap-2">
             <input className="input" value={p.label} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} />
             <input className="input" placeholder="12000" value={p.amount} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} />
-            <input className="input" type="number" min={0} value={p.day} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, day: Number(e.target.value) } : x))} />
+            <input className="input" type="number" min={0} value={p.day} disabled={p.paid} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, day: Number(e.target.value) } : x))} />
+            <label className="flex items-center gap-1 text-xs" title="Already paid before today: it is already out of your cash"><input type="checkbox" className="accent-teal-600" checked={p.paid} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, paid: e.target.checked } : x))} />paid</label>
             <button className="text-slate-400 hover:text-rose-600" onClick={() => setPays(pays.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button>
           </div>
         ))}
-        <button className="text-sm font-semibold text-brand-700" onClick={() => setPays([...pays, { label: "Payment", amount: "", day: 0 }])}>+ Add payment</button>
+        <button className="text-sm font-semibold text-brand-700" onClick={() => setPays([...pays, { label: "Payment", amount: "", day: 0, paid: false }])}>+ Add payment</button>
       </div>
       <LoadingButton loading={loading} loadingText="Checking…" disabled={busy} className="btn-primary w-full" onClick={() => onSubmit(f, pays)}>Use these facts</LoadingButton>
       <p className="text-xs text-slate-500">Your cash position, reserve and lenders come from the business profile, which you can edit on the next screen.</p>

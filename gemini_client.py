@@ -310,7 +310,11 @@ Rules:
   payment_terms_basis says when they start: "after_delivery", "after_invoice",
   "after_order", or "unspecified" if the document does not say.
 - supplier_payments: every payment WE must make to the supplier or for
-  shipping, with its amount and due day as written.
+  shipping, with its amount and due day as written. Set already_paid to true
+  only if a document says that payment was already made ("paid", "received
+  with thanks"); otherwise false.
+- advance_received: an advance or deposit the CUSTOMER has already paid us
+  for this order, as written (empty if none is stated).
 - bank_details: every bank account given for paying the supplier, one entry
   per document that states one.
 - confidence is 0.0-1.0; use < 0.7 when a value is ambiguous.
@@ -341,6 +345,7 @@ def extract_order_documents(docs) -> dict:
         label: str
         amount: Sourced
         due_day: Sourced
+        already_paid: bool
 
     class Bank(BaseModel):
         source: str
@@ -374,6 +379,7 @@ def extract_order_documents(docs) -> dict:
         cancellation_clause: Sourced
         supplier_name: Sourced
         invoice_amount: Sourced
+        advance_received: Sourced
         supplier_payments: list[Payment]
         line_items: list[Item]
         bank_details: list[Bank]

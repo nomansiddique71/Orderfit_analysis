@@ -108,19 +108,32 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
     if terms is None:
         missing.append("Customer payment terms (days)")
 
+    advance_text = (val("advance_received") or "").strip()
+    advance = parse_amount(advance_text) if advance_text else None
+    if advance_text and advance is None:
+        missing.append("Advance already received (not a readable amount)")
+    elif advance and order_value and advance.value > order_value.value:
+        missing.append("Advance already received (larger than the order value)")
+
     if "supplier_payments" in edits:
         raw_payments = [(str(p.get("label", "Supplier payment")), str(p.get("amount", "")),
-                         str(p.get("day", ""))) for p in edits["supplier_payments"]]
+                         str(p.get("day", "")), bool(p.get("paid", False)))
+                        for p in edits["supplier_payments"]]
     else:
-        raw_payments = [(p.label, p.amount.value, p.day.value) for p in facts.supplier_payments]
-    payments = []
-    for label, amount, day in raw_payments:
-        a, d = parse_amount(amount), parse_day(day)
+        raw_payments = [(p.label, p.amount.value, p.day.value, p.already_paid)
+                        for p in facts.supplier_payments]
+    payments, already_paid = [], D(0)
+    for label, amount, day, paid in raw_payments:
+        a = parse_amount(amount)
+        if paid and a is not None:  # already out of the bank: no date needed
+            already_paid += a.value
+            continue
+        d = parse_day(day)
         if a is None or d is None:
             missing.append(f"Amount/day for '{label}'")
         else:
             payments.append((label, a.value, d))
-    if not payments:
+    if not payments and not already_paid:
         missing.append("At least one supplier payment")
 
     if missing:
@@ -165,5 +178,13 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
         order_value=order_value.value, delivery_day=delivery, required_delivery_day=delivery,
         base_movements=tuple(profile.obligations), order_costs=tuple(costs),
         financing_offers=tuple(profile.offers), max_financing_cost=profile.max_financing_cost,
-        supplier=supplier, late_penalty_pct_per_week=penalty, customer=customer, order_ref=ref)
+        supplier=supplier, late_penalty_pct_per_week=penalty, customer=customer, order_ref=ref,
+        advance_received=advance.value if advance else D(0), costs_already_paid=already_paid,
+        currency=profile.currency)
+    if advance:
+        assumptions.append(f"The customer already paid {advance.value:,.0f} in advance; it is "
+                           f"already in today's cash, so they still owe {case.balance_due:,.0f}.")
+    if already_paid:
+        assumptions.append(f"{already_paid:,.0f} already paid to the supplier is already out of "
+                           f"today's cash; it still counts as an order cost for margin.")
     return BuildResult(case, pay_day, [], assumptions, readings, basis)

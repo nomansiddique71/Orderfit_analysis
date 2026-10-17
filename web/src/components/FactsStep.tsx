@@ -6,7 +6,7 @@ import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle } from ".
 
 export interface FactState {
   edits: Record<string, string>;
-  payEdits: { label: string; amount: string; day: string }[] | null;
+  payEdits: { label: string; amount: string; day: string; paid: boolean }[] | null;
   confirmed: Set<string>;
   reserve: number | null;
   openingCash: number | null;
@@ -19,6 +19,10 @@ const MODE_TEXT: Record<string, string> = {
   parser: "Read by the built-in parser (Gemini unavailable). Please check every value.",
   manual: "Entered by you. No AI was used.",
 };
+
+// Shown even when the documents don't mention them, so the owner can fill them in.
+const ALWAYS_SHOWN = new Set(["advance_received"]);
+const PLACEHOLDER: Record<string, string> = { advance_received: "0 if the customer has not paid anything yet" };
 
 export function payKey(i: number, label: string, amount: string, day: string) {
   return `Supplier payment ${i + 1}: ${label}=${amount} on ${day}`;
@@ -66,6 +70,7 @@ function SourceQuote({ f, docs }: { f: Fact; docs: DocView["documents"] }) {
 
 function Status({ f }: { f: Fact }) {
   if (f.source === "OWNER") return <Pill tone="blue">Entered by you</Pill>;
+  if (!f.value) return <Pill tone="slate">Not in the documents</Pill>;
   if (f.verified && f.confidence >= 0.7) return <Pill tone="green"><BadgeCheck className="h-3 w-3" /> Verified · {Math.round(f.confidence * 100)}%</Pill>;
   return <Pill tone="amber"><TriangleAlert className="h-3 w-3" /> Needs your check · {Math.round(f.confidence * 100)}%</Pill>;
 }
@@ -78,7 +83,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
   const cur = view.profile?.currency ?? "USD";
   const flags = [...view.flags].sort((a, b) => ({ critical: 0, warning: 1, info: 2 }[a.severity] - { critical: 0, warning: 1, info: 2 }[b.severity]));
   const openBlocks = flags.filter((f) => f.blocks_execution && !f.resolved);
-  const pays = state.payEdits ?? view.supplier_payments.map((p) => ({ label: p.label, amount: p.amount.value, day: p.day.value }));
+  const pays = state.payEdits ?? view.supplier_payments.map((p) => ({ label: p.label, amount: p.amount.value, day: p.day.value, paid: p.paid }));
 
   async function resolve(code: string, note: string) {
     setView(await post<DocView>("/api/flags/resolve", { code, note }));
@@ -114,7 +119,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
           sub="Edit any value that is wrong. Values marked 'Needs your check' change the result, so confirm them."
           right={view.documents.length > 0 && <button className="btn-secondary" onClick={() => setShowDocs(!showDocs)}><Eye className="h-4 w-4" /> {showDocs ? "Hide" : "Show"} documents</button>} />
         <div className="divide-y divide-slate-100">
-          {view.facts.filter((f) => f.value || state.edits[f.key] !== undefined).map((f) => {
+          {view.facts.filter((f) => f.value || state.edits[f.key] !== undefined || ALWAYS_SHOWN.has(f.key)).map((f) => {
             const value = state.edits[f.key] ?? f.value;
             const key = `${f.label}=${f.value}`;
             const edited = state.edits[f.key] !== undefined && state.edits[f.key] !== f.value;
@@ -125,7 +130,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
                   {f.simulation && <div className="text-[11px] text-slate-400">changes the cash result</div>}
                 </div>
                 <div>
-                  <input className="input" value={value} onChange={(e) => setState({ ...state, edits: { ...state.edits, [f.key]: e.target.value } })} />
+                  <input className="input" value={value} placeholder={PLACEHOLDER[f.key]} onChange={(e) => setState({ ...state, edits: { ...state.edits, [f.key]: e.target.value } })} />
                   <SourceQuote f={f} docs={view.documents} />
                   {f.note && <div className="mt-1 text-xs text-amber-700">{f.note}</div>}
                 </div>
@@ -147,7 +152,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
           <div className="label mb-2">What you pay the supplier (and shipping)</div>
           <div className="overflow-hidden rounded-xl border border-slate-200">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="px-3 py-2">Payment</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Due</th><th className="px-3 py-2">Source</th><th /></tr></thead>
+              <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="px-3 py-2">Payment</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Due</th><th className="px-3 py-2" title="Paid before today: already out of your cash, so it is not a future payment">Already paid?</th><th className="px-3 py-2">Source</th><th /></tr></thead>
               <tbody>
                 {pays.map((p, i) => {
                   const orig = view.supplier_payments[i];
@@ -158,7 +163,8 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
                     <tr key={i} className="border-t border-slate-100 align-top">
                       <td className="px-3 py-2"><input className="input" value={p.label} onChange={(e) => set({ label: e.target.value })} /></td>
                       <td className="px-3 py-2"><input className="input" value={p.amount} onChange={(e) => set({ amount: e.target.value })} /></td>
-                      <td className="px-3 py-2"><input className="input" value={p.day} onChange={(e) => set({ day: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input className="input" value={p.day} disabled={p.paid} onChange={(e) => set({ day: e.target.value })} /></td>
+                      <td className="px-3 py-2 text-center"><input type="checkbox" className="h-4 w-4 accent-teal-600" checked={p.paid} onChange={(e) => set({ paid: e.target.checked })} /></td>
                       <td className="px-3 py-2 text-xs text-slate-500">{orig?.amount.span ? `“${orig.amount.span}”` : "you"}{orig?.amount.note && <div className="text-amber-700">{orig.amount.note}</div>}</td>
                       <td className="px-3 py-2">{needs && state.payEdits === null && (
                         <label className="flex items-center gap-1 text-xs"><input type="checkbox" className="accent-teal-600" checked={state.confirmed.has(key)} onChange={() => toggle(key)} />confirm</label>)}</td>
@@ -168,7 +174,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
               </tbody>
             </table>
           </div>
-          <button className="mt-2 text-sm font-semibold text-brand-700" onClick={() => setState({ ...state, payEdits: [...pays, { label: "Payment", amount: "", day: "day 0" }] })}>+ Add payment</button>
+          <button className="mt-2 text-sm font-semibold text-brand-700" onClick={() => setState({ ...state, payEdits: [...pays, { label: "Payment", amount: "", day: "day 0", paid: false }] })}>+ Add payment</button>
         </div>
 
         {view.bank_details.length > 0 && (

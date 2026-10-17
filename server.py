@@ -132,7 +132,8 @@ def _documents_view(s: Session) -> dict:
                        "text": d.text[:6000]} for d in s.docs],
         "facts": [_fact_json(k, v) for k, v in f.scalars().items()],
         "supplier_payments": [{"label": p.label, "amount": _fact_json("amount", p.amount),
-                               "day": _fact_json("day", p.day)} for p in f.supplier_payments],
+                               "day": _fact_json("day", p.day), "paid": p.already_paid}
+                              for p in f.supplier_payments],
         "line_items": [{"description": li.description, "amount": li.amount.value,
                         "source": li.amount.source} for li in f.line_items],
         "bank_details": [{"source": b.source, "payee": b.payee, "bank": b.bank_name,
@@ -322,7 +323,8 @@ def manual(req: ManualReq):
         f.supplier_payments.append(SupplierPayment(
             str(p.get("label", "Supplier payment"))[:80],
             Fact(str(p.get("amount", "")), "OWNER", "entered by the owner", 1.0, True),
-            Fact(f"day {p.get('day', '')}", "OWNER", "entered by the owner", 1.0, True)))
+            Fact(f"day {p.get('day', '')}", "OWNER", "entered by the owner", 1.0, True),
+            bool(p.get("paid", False))))
     s.docs, s.facts, s.mode, s.sample_id = [], f, "manual", None
     s.note = "Facts entered by the owner (no AI used)."
     s.profile = s.profile or _default_profile()

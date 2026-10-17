@@ -156,7 +156,8 @@ def facts_from_model(data: dict, docs: list[Document]) -> Facts:
     f = Facts(**{name: fact(data.get(name)) for name in Facts.SCALAR_FIELDS})
     for p in data.get("supplier_payments", [])[:12]:
         f.supplier_payments.append(SupplierPayment(str(p.get("label", "Supplier payment"))[:80],
-                                                   fact(p.get("amount")), fact(p.get("due_day"))))
+                                                   fact(p.get("amount")), fact(p.get("due_day")),
+                                                   p.get("already_paid") is True))
     for li in data.get("line_items", [])[:40]:
         f.line_items.append(LineItem(str(li.get("description", ""))[:120], fact(li.get("amount"))))
     for b in data.get("bank_details", [])[:10]:
@@ -207,6 +208,7 @@ def parse_template(docs: list[Document]) -> Facts:
                                              0.9 if basis != "unspecified" else 0.5)
             f.late_penalty_pct_per_week = _find(d, "Late delivery penalty", "Late delivery")
             f.cancellation_clause = _find(d, "Cancellation")
+            f.advance_received = _find(d, "Advance received", "Advance paid", "Deposit received")
             for m in re.finditer(r"^\s*Item\s*\d+\s*[:\-]\s*(?P<desc>.+?)\s+(?P<amt>(USD|INR|Rs\.?|\$)\s*[\d,\.]+\s*\w*)\s*$",
                                  d.text, re.IGNORECASE | re.MULTILINE):
                 f.line_items.append(LineItem(m.group("desc").strip(),
@@ -276,7 +278,8 @@ def _verify(fact: Fact, docs: dict[str, Document], kind: str) -> None:
     fact.verified = True
 
 
-KINDS = {"order_value": "amount", "invoice_amount": "amount", "delivery_day": "day",
+KINDS = {"order_value": "amount", "invoice_amount": "amount", "advance_received": "amount",
+         "delivery_day": "day",
          "payment_terms_days": "day", "late_penalty_pct_per_week": "percent"}
 
 
