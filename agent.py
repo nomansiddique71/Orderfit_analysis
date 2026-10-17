@@ -36,15 +36,19 @@ class ExtractedField:
     span: str  # the exact source text
     confidence: float
     question: str | None = None  # set when confidence is below threshold
+    simulation: bool | None = None  # explicit flag for uploaded-document fields
 
     @property
     def affects_simulation(self) -> bool:
         """True if this field feeds a dated cash movement or a hard constraint."""
+        if self.simulation is not None:
+            return self.simulation
         return self.name in SIMULATION_FIELDS
 
     @property
     def low_confidence(self) -> bool:
-        return self.confidence < LOW_CONFIDENCE
+        return self.confidence < LOW_CONFIDENCE or (
+            self.simulation is not None and self.question is not None)
 
     @property
     def key(self) -> str:
@@ -478,16 +482,39 @@ class AgentRun:
     # X-08 / P-02: no accept plan keeps the reserve and the hard constraints
     no_plan_survives: bool = False
     smallest_changes: list[str] = field(default_factory=list)
+    integrity_flags: list = field(default_factory=list)  # doc_checks.IntegrityFlag
+
+    @property
+    def execution_blocks(self) -> list[str]:
+        """Unresolved integrity flags that must stop any sandbox action."""
+        return list(dict.fromkeys(f.title for f in self.integrity_flags
+                                  if f.blocks_execution and not f.resolved))
 
     @property
     def provisional(self) -> bool:
         return bool(self.provisional_fields)
 
 
+@dataclass
+class DocumentStage:
+    """Stage A output produced outside run_agent (e.g. from uploaded documents).
+
+    fields/injections follow the same contract as the built-in extraction;
+    integrity holds deterministic fraud and consistency flags (doc_checks.py).
+    """
+
+    fields: list[ExtractedField]
+    injections: list[InjectionFlag]
+    mode: str  # "gemini" | "gemini-pdf" | "parser" | "manual"
+    note: str = ""
+    integrity: list = field(default_factory=list)  # list[doc_checks.IntegrityFlag]
+
+
 def run_agent(case: Case, customer_payment_day: int, priority: str,
               injected: bool, confirmed: frozenset[str] = frozenset(),
               tie_choice: str | None = None,
-              stress_delay: int = STRESS_DELAYS[0]) -> AgentRun:
+              stress_delay: int = STRESS_DELAYS[0],
+              documents: DocumentStage | None = None) -> AgentRun:
     """Run stages A-E.
 
     confirmed: ExtractedField.key values the owner has explicitly confirmed.
@@ -496,24 +523,35 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
     tie_choice: plan id the owner picked when the top two plans were a near
     tie. Ignored unless it is one of the two tied plans.
     stress_delay: days late that a plan must survive to count as robust.
+    documents: stage-A result for uploaded documents. When None, the built-in
+    Acme documents are extracted (Gemini if configured, regex otherwise).
     """
     stress = [stress_delay]
-    from case_data import QUOTE_TEXT, po_text
-
     log: list[tuple[str, str, str]] = []
 
     # Stage A -- extraction
-    po, quote = po_text(injected), QUOTE_TEXT
-    fields, injections, extraction_mode, extraction_note = extract_documents(po, quote, case)
+    integrity: list = []
+    if documents is None:
+        from case_data import QUOTE_TEXT, po_text
+
+        po, quote = po_text(injected), QUOTE_TEXT
+        fields, injections, extraction_mode, extraction_note = extract_documents(po, quote, case)
+    else:
+        fields, injections = documents.fields, documents.injections
+        extraction_mode, extraction_note = documents.mode, documents.note
+        integrity = list(documents.integrity)
     questions = [f.question for f in fields if f.question]
     provisional_fields = [f for f in fields if f.affects_simulation and f.low_confidence
                           and f.key not in confirmed]
     log.append(("A", "Commercial document extraction",
                 ("Gemini structured extraction, verified by the engine: "
-                 if extraction_mode == "gemini" else "Regex fallback extraction: ")
+                 if extraction_mode.startswith("gemini") else
+                 "Owner-entered facts: " if extraction_mode == "manual" else
+                 "Deterministic fallback extraction: ")
                 + f"{len(fields)} typed fields with source spans; "
                 f"{len(questions)} low-confidence field(s) raised as owner questions; "
-                f"{len(injections)} injection attempt(s) flagged."))
+                f"{len(injections)} injection attempt(s) flagged"
+                + (f"; {len(integrity)} integrity/fraud check(s) raised." if integrity else ".")))
 
     # Stage B -- financial-state reconstruction (typed, dated, decimal-safe)
     log.append(("B", "Financial-state reconstruction",
@@ -607,7 +645,7 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
         extraction_note=extraction_note, provisional_fields=provisional_fields,
         near_tie=near_tie, owner_tie_choice=owner_tie_choice, stress_delay=stress_delay,
         min_safe_loans=min_safe_loans, no_plan_survives=no_plan_survives,
-        smallest_changes=smallest_changes,
+        smallest_changes=smallest_changes, integrity_flags=integrity,
     )
 
 
@@ -684,41 +722,42 @@ def _base_uncertainty(run: AgentRun) -> tuple[str, str]:
 
 def draft_message(winner: SimulationResult, case: Case, pay_day: int,
                   min_advance) -> str:
-    p = winner.plan
+    """Counterparty message built only from engine-verified numbers."""
+    p, ref = winner.plan, case.order_ref
     if p.id == "decline":
-        return ("Subject: PO-8841 -- unable to accept on current terms\n\n"
+        return (f"Subject: {ref} -- unable to accept on current terms\n\n"
                 "Thank you for the purchase order. After a full review of our dated cash "
-                "position we cannot accept PO-8841 on its current payment terms without "
+                f"position we cannot accept {ref} on its current payment terms without "
                 "breaching our minimum cash reserve. We would be glad to proceed if "
                 "payment terms can be restructured"
                 + (f" -- for example a {min_advance[0] * 100:.0f}% advance on confirmation "
                    "would make the order workable" if min_advance else "")
                 + ".")
     if p.advance_pct > 0:
-        return (f"Subject: PO-8841 -- acceptance with a {p.advance_pct * 100:.0f}% advance\n\n"
-                f"We are pleased to accept PO-8841 (USD {case.order_value:,.0f}) with one "
+        return (f"Subject: {ref} -- acceptance with a {p.advance_pct * 100:.0f}% advance\n\n"
+                f"We are pleased to accept {ref} (USD {case.order_value:,.0f}) with one "
                 f"adjustment: an advance of USD "
                 f"{case.order_value * p.advance_pct:,.0f} "
                 f"({p.advance_pct * 100:.0f}% of order value) payable on order "
                 f"confirmation. This lets us commit production capacity and deliver by "
                 f"day {case.required_delivery_day}. All other terms as per your PO.")
     if not p.supplier_extension and p.financing is None:
-        return ("Subject: PO-8841 -- acceptance\n\n"
-                f"We accept PO-8841 (USD {case.order_value:,.0f}) as issued and will "
+        return (f"Subject: {ref} -- acceptance\n\n"
+                f"We accept {ref} (USD {case.order_value:,.0f}) as issued and will "
                 f"deliver by day {case.required_delivery_day}.")
     if p.supplier_extension and p.financing is None:
-        return ("Subject: Payment schedule -- PO to Brightwave Supplies\n\n"
-                "We accept your quotation Q-3312 and ask to restructure the payment "
-                "schedule: the USD 12,000 deposit and USD 5,000 pre-delivery payment to "
-                "fall due on day 40 (after our customer's receivables clear). Shipping "
-                "payment of USD 1,500 remains on delivery day 30.")
-    if p.financing is not None:
-        f = p.financing
-        return (f"Subject: Financing acceptance {f.id} -- {f.lender}\n\n"
-                f"We accept term sheet {f.id}: draw USD {f.principal:,.0f} on day "
-                f"{f.draw_day}, repay USD {f.principal + f.cost():,.0f} on day "
-                f"{f.repay_day} ({f.terms_text()}). Please confirm and issue the "
-                f"drawdown notice.")
-    return ("Subject: PO-8841 -- acceptance and revised schedule\n\n"
-            "We accept PO-8841. To align payments with our cash cycle we propose "
-            "adjusting the supplier payment schedule as drafted with this memo.")
+        moved = [m for m in case.order_costs if m.deferrable_to is not None]
+        kept = [m for m in case.order_costs if m.deferrable_to is None]
+        return (f"Subject: Payment schedule -- {case.supplier or 'supplier'}\n\n"
+                "We accept your quotation and ask to restructure the payment schedule: "
+                + "; ".join(f"the USD {-m.amount:,.0f} {m.label.lower()} to fall due on day "
+                            f"{m.deferrable_to}" for m in moved)
+                + " (after our customer's receivables clear)."
+                + ("".join(f" The USD {-m.amount:,.0f} {m.label.lower()} remains on day "
+                           f"{m.day}." for m in kept)))
+    f = p.financing
+    return (f"Subject: Financing acceptance {f.id} -- {f.lender}\n\n"
+            f"We accept term sheet {f.id}: draw USD {f.principal:,.0f} on day "
+            f"{f.draw_day}, repay USD {f.principal + f.cost():,.0f} on day "
+            f"{f.repay_day} ({f.terms_text()}). Please confirm and issue the "
+            f"drawdown notice.")

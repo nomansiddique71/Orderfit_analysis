@@ -1,0 +1,107 @@
+{
+  "name": "Acme Trading Co.",
+  "currency": "USD",
+  "opening_cash": "30000",
+  "reserve": "8000",
+  "max_financing_cost": "2000",
+  "obligations": [
+    {
+      "day": 10,
+      "amount": "-3000",
+      "label": "Supplier bill (existing stock)",
+      "kind": "obligation",
+      "counterparty": "PackRight Co.",
+      "due_day": null
+    },
+    {
+      "day": 15,
+      "amount": "-7000",
+      "label": "Payroll",
+      "kind": "payroll",
+      "counterparty": "Staff",
+      "due_day": null
+    },
+    {
+      "day": 25,
+      "amount": "4000",
+      "label": "Receivable collection (invoice 1187)",
+      "kind": "receivable",
+      "counterparty": "Northlake Stores",
+      "due_day": -5
+    },
+    {
+      "day": 40,
+      "amount": "-3000",
+      "label": "Supplier bill (existing stock)",
+      "kind": "obligation",
+      "counterparty": "PackRight Co.",
+      "due_day": null
+    },
+    {
+      "day": 45,
+      "amount": "-7000",
+      "label": "Payroll",
+      "kind": "payroll",
+      "counterparty": "Staff",
+      "due_day": null
+    }
+  ],
+  "offers": [
+    {
+      "id": "OFF-1",
+      "lender": "Lumina Capital",
+      "principal": "15000",
+      "fee_pct": "3.5",
+      "origination": "150",
+      "draw_day": 0,
+      "repay_day": 61,
+      "expires_day": 3,
+      "conditions": "Flat fee 3.5% + USD 150 origination; repay day 61.",
+      "monthly_rate_pct": "0",
+      "min_principal": null,
+      "max_principal": null
+    },
+    {
+      "id": "OFF-2",
+      "lender": "Lumina Capital",
+      "principal": "10000",
+      "fee_pct": "3.5",
+      "origination": "150",
+      "draw_day": 0,
+      "repay_day": 61,
+      "expires_day": 3,
+      "conditions": "Flat fee 3.5% + USD 150 origination; repay day 61.",
+      "monthly_rate_pct": "0",
+      "min_principal": null,
+      "max_principal": null
+    },
+    {
+      "id": "OFF-3",
+      "lender": "Harbor Bank",
+      "principal": "12000",
+      "fee_pct": "0",
+      "origination": "100",
+      "draw_day": 0,
+      "repay_day": 90,
+      "expires_day": 7,
+      "conditions": "Credit line 5,000-20,000: 1.5% per month + USD 100 fee; repay day 90.",
+      "monthly_rate_pct": "1.5",
+      "min_principal": "5000",
+      "max_principal": "20000"
+    },
+    {
+      "id": "OFF-4",
+      "lender": "Northwind Microfinance",
+      "principal": "3000",
+      "fee_pct": "2",
+      "origination": "50",
+      "draw_day": 0,
+      "repay_day": 45,
+      "expires_day": 5,
+      "conditions": "Minimum loan USD 5,000; 2% flat + USD 50.",
+      "monthly_rate_pct": "0",
+      "min_principal": "5000",
+      "max_principal": null
+    }
+  ]
+}

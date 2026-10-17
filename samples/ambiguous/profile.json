@@ -1,0 +1,54 @@
+{
+  "name": "Lotus Home Textiles",
+  "currency": "INR",
+  "opening_cash": "400000",
+  "reserve": "100000",
+  "max_financing_cost": "15000",
+  "obligations": [
+    {
+      "day": 15,
+      "amount": "-120000",
+      "label": "Payroll",
+      "kind": "payroll",
+      "counterparty": "Staff"
+    },
+    {
+      "day": 25,
+      "amount": "150000",
+      "label": "Receivable (invoice 3307)",
+      "kind": "receivable",
+      "counterparty": "Coastal Stores",
+      "due_day": -3
+    },
+    {
+      "day": 30,
+      "amount": "-40000",
+      "label": "Warehouse rent",
+      "kind": "obligation",
+      "counterparty": "Landlord"
+    },
+    {
+      "day": 45,
+      "amount": "-120000",
+      "label": "Payroll",
+      "kind": "payroll",
+      "counterparty": "Staff"
+    }
+  ],
+  "offers": [
+    {
+      "id": "DCB-1",
+      "lender": "Deccan Co-operative Bank",
+      "principal": "200000",
+      "fee_pct": "0",
+      "origination": "2500",
+      "draw_day": 0,
+      "repay_day": 90,
+      "expires_day": 10,
+      "monthly_rate_pct": "1.25",
+      "conditions": "Working-capital line 50,000-3,00,000; 1.25% per month + 2,500 fee.",
+      "min_principal": "50000",
+      "max_principal": "300000"
+    }
+  ]
+}

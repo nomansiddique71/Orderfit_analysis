@@ -1,0 +1,73 @@
+[
+  {
+    "id": "clean",
+    "title": "Clean order",
+    "badge": "Risk",
+    "subtitle": "Acme Trading Co. \u00b7 USD 30,000 order from Meridian Retail",
+    "story": "A profitable order that would break the cash reserve on day 20. SolvOrder finds the safest way to accept it.",
+    "look_for": [
+      "Reserve breach on day 20 if accepted as-is",
+      "50% customer advance is the cheapest safe plan",
+      "Late-payment stress and the minimum safe loan"
+    ],
+    "profile": "acme",
+    "files": [
+      "purchase_order.pdf",
+      "supplier_quote.pdf",
+      "supplier_invoice.pdf"
+    ]
+  },
+  {
+    "id": "fraud",
+    "title": "Changed bank details",
+    "badge": "Fraud",
+    "subtitle": "Same order, but the invoice and an urgent email ask for a new account",
+    "story": "The supplier's invoice and a pressure email point to a different bank account than the quote. Classic payment-diversion fraud.",
+    "look_for": [
+      "Critical fraud flag: supplier bank details changed",
+      "Pressure wording ('urgent', 'do not call') flagged",
+      "All sandbox payments blocked until you record a call-back check"
+    ],
+    "profile": "acme",
+    "files": [
+      "purchase_order.pdf",
+      "supplier_quote.pdf",
+      "supplier_invoice.pdf",
+      "supplier_email.pdf"
+    ]
+  },
+  {
+    "id": "injection",
+    "title": "Hidden AI instruction",
+    "badge": "Security",
+    "subtitle": "The purchase order tells the AI to ignore the cash reserve",
+    "story": "A line in the PO is addressed to the AI agent. SolvOrder treats documents as data: it flags the line and the decision does not change.",
+    "look_for": [
+      "Injection flagged with the exact quoted text",
+      "Recommendation identical to the clean order"
+    ],
+    "profile": "acme",
+    "files": [
+      "purchase_order.pdf",
+      "supplier_quote.pdf"
+    ]
+  },
+  {
+    "id": "ambiguous",
+    "title": "Ambiguous terms (INR)",
+    "badge": "Integrity",
+    "subtitle": "Lotus Home Textiles \u00b7 INR 5,00,000 order with lakh amounts",
+    "story": "'Net 45' with no start date, line items that do not add up, lakh/crore amounts and a cancel-anytime clause. SolvOrder asks before it decides.",
+    "look_for": [
+      "Two readings of 'Net 45' (day 45 vs day 80)",
+      "Line items sum to 4,80,000, not 5,00,000",
+      "2L / 1.5 lakh read as 2,00,000 / 1,50,000",
+      "Cancellation clause and money at risk"
+    ],
+    "profile": "lotus",
+    "files": [
+      "purchase_order.pdf",
+      "supplier_quote.pdf"
+    ]
+  }
+]

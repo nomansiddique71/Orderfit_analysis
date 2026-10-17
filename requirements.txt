@@ -7,3 +7,6 @@ altair==6.3.0
 # Gemini (Vertex AI or API key). The app degrades to templates without it.
 google-genai==2.31.0
 pydantic==2.14.1
+
+# Uploaded documents: PDF text layer for span verification
+pypdf==6.21.0

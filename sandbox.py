@@ -173,12 +173,20 @@ class ExecutionReport:
 def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
                  approvals: dict[str, Approval], log: OperationLog, gate: PermissionGate,
                  bank: SimulatedBank, outbox: MockOutbox,
-                 portal: MockLenderPortal) -> ExecutionReport:
+                 portal: MockLenderPortal, blocks: list[str] | None = None) -> ExecutionReport:
     """T2: carry the approved plan version into the sandbox with tier checks.
 
     result is the engine's simulation of the approved plan (the recommended
     plan, or the one the owner chose under a reserve override).
+    blocks: unresolved fraud/integrity flags (doc_checks). While any remain,
+    nothing reaches the sandbox, whatever the approval says.
     """
+    if blocks:
+        log.append("execute_plan", "T2", {"blocks": blocks}, approval.approval_id, "BLOCKED",
+                   "unresolved fraud/integrity flag(s): " + "; ".join(blocks))
+        return ExecutionReport(False, ["Execution blocked by unresolved fraud/integrity "
+                                       "flag(s): " + "; ".join(blocks)],
+                               override=approval.override)
     from engine import plan_movements
 
     w = result

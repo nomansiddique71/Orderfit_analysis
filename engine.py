@@ -155,6 +155,8 @@ class Case:
     financing_offers: tuple[FinancingOffer, ...]
     max_financing_cost: Decimal = D("2000")
     supplier: str = ""  # counterparty whose prices a price-increase scenario changes
+    customer: str = "Meridian Retail Group"
+    order_ref: str = "PO-8841"
     late_penalty_pct_per_week: Decimal = D("0")  # from the PO: % of order value per week late
 
     @property
@@ -266,13 +268,14 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None,
             due = money(due * scenario.payment_fraction)
         due -= late_delivery_penalty(case, scenario.supplier_delay_days)
         out.append(Movement(customer_payment_day + scenario.supplier_delay_days, max(due, ZERO),
-                 "Customer payment (PO-8841)" + (" -- balance after advance" if advance else ""),
-                 "order_revenue", "Meridian Retail Group"))
+                 f"Customer payment ({case.order_ref})"
+                 + (" -- balance after advance" if advance else ""),
+                 "order_revenue", case.customer))
     if advance > 0:
         out.append(
             Movement(0, advance,
                      f"Customer advance ({plan.advance_pct * 100:.0f}%)", "advance",
-                     "Meridian Retail Group", certain=False)
+                     case.customer, certain=False)
         )
     if plan.financing is not None:
         f = plan.financing
