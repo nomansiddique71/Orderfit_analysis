@@ -12,7 +12,7 @@ import { Callout, Spinner } from "./components/ui";
 
 const INTRO = [
   "Start with the order. SolvOrder needs the purchase order and what you will pay the supplier; a quote, invoice or email helps the fraud checks.",
-  "Gemini has read your documents. Each value shows the exact text it came from. Fix anything wrong, confirm what is flagged, and clear any fraud alert.",
+  "SolvOrder has read your documents (with Google Gemini when it is available). Each value shows the exact text it came from. Fix anything wrong, confirm what is flagged, and clear any fraud alert.",
   "Your cash, day by day, if you accept the order as it is, plus the recommended plan.",
   "SolvOrder tried every mix of customer advance, later supplier payment and loans, kept only plans that keep your reserve, and ranked them by what you care about.",
   "Approve one plan. SolvOrder drafts the message, runs the plan in a sandbox bank and logs every step. Nothing real is sent or paid.",

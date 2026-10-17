@@ -12,3 +12,6 @@ streamlit.log
 .claude/
 tests/
 requirements-dev.txt
+scripts/
+web/node_modules/
+web/dist/

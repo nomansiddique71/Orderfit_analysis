@@ -170,7 +170,7 @@ def _terms_checks(facts: Facts, docs: dict[str, Document]) -> list[IntegrityFlag
             "none", "no", "n/a", "not stated"):
         out.append(IntegrityFlag(
             "CANCELLATION", "warning", "The customer can cancel",
-            f"Clause: \"{facts.cancellation_clause.value.strip()}\". Money already paid to "
+            f"Clause: \"{facts.cancellation_clause.value.strip().rstrip('.')}\". Money already paid to "
             f"the supplier is at risk if the order is cancelled. See 'money at risk by "
             f"date' in the What-if panel.",
             [facts.cancellation_clause.source], category="integrity"))
