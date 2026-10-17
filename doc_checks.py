@@ -81,20 +81,23 @@ def _bank_checks(facts: Facts, docs: dict[str, Document]) -> list[IntegrityFlag]
         reference = next((b for b in banks if _doc_kind(docs, b.source) == "supplier_quote"),
                          banks[0])
         ref_acct = normalise_account(reference.account_number)
-        for b in banks:
-            if b is reference:
-                continue
-            if normalise_account(b.account_number) != ref_acct:
-                out.append(IntegrityFlag(
-                    "BANK_CHANGE", "critical", "Supplier bank details changed",
-                    f"{b.source} asks for payment to account {mask_account(b.account_number)}"
-                    f" ({b.bank_name or 'bank not stated'}, payee '{b.payee}'), but "
-                    f"{reference.source} gave {mask_account(reference.account_number)} "
-                    f"({reference.bank_name or 'bank not stated'}). This is the classic "
-                    f"payment-diversion fraud pattern. Verify the change by calling the "
-                    f"supplier on a number you already had, not one in these documents. "
-                    f"All payments are blocked until you record that check.",
-                    [reference.source, b.source], blocks_execution=True, category="fraud"))
+        changed = [b for b in banks if b is not reference
+                   and normalise_account(b.account_number) != ref_acct]
+        if changed:
+            asks = "; ".join(
+                f"{b.source} asks for account {mask_account(b.account_number)}"
+                f" ({b.bank_name or 'bank not stated'}"
+                + (f", payee '{b.payee}'" if b.payee.strip() else "") + ")"
+                for b in changed)
+            out.append(IntegrityFlag(
+                "BANK_CHANGE", "critical", "Supplier bank details changed",
+                f"{asks}, but {reference.source} gave {mask_account(reference.account_number)} "
+                f"({reference.bank_name or 'bank not stated'}). This is the classic "
+                f"payment-diversion fraud pattern. Verify the change by calling the "
+                f"supplier on a number you already had, not one in these documents. "
+                f"All payments are blocked until you record that check.",
+                [reference.source] + [b.source for b in changed], blocks_execution=True,
+                category="fraud"))
     supplier = facts.supplier_name.value.strip().lower()
     if supplier:
         for b in banks:
