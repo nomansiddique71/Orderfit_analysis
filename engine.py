@@ -431,7 +431,25 @@ def rank_plans(results: list[SimulationResult], case: Case,
 
     The engine owns feasibility; this function only orders what the engine
     already verified. A priority conflict is flagged, never silently dropped.
+
+    priority "most_robust": order by late-payment tolerance, then financing
+    cost. Decline trivially tolerates anything, so it is ranked last whenever
+    at least one accept plan survives the chosen stress (r.robust), and first
+    only when none does. Requires r.tolerance to be filled in.
     """
+    consents = lambda r: (int(r.depends_on_customer_consent)  # noqa: E731
+                          + int(r.depends_on_supplier_consent))
+    feasible = [r for r in results if r.feasible]
+
+    if priority == "most_robust":
+        def rkey(r: SimulationResult):
+            tol = r.tolerance.rank_value if r.tolerance else -1
+            return (-tol, r.financing_cost, consents(r), r.plan.advance_pct,
+                    -r.net_margin, r.plan.id)
+        accept = sorted((r for r in feasible if r.plan.id != "decline"), key=rkey)
+        decline = [r for r in feasible if r.plan.id == "decline"]
+        return accept + decline if any(r.robust for r in accept) else decline + accept
+
     def key(r: SimulationResult):
         penalty = 0
         if priority == "avoid_customer_consent" and r.depends_on_customer_consent:
@@ -444,11 +462,8 @@ def rank_plans(results: list[SimulationResult], case: Case,
             score = -r.financing_cost * 1000 + r.net_margin
         else:  # avoid_customer_consent
             score = r.net_margin
-        return (penalty, -score, r.financing_cost,
-                int(r.depends_on_customer_consent) + int(r.depends_on_supplier_consent),
-                r.plan.id)
+        return (penalty, -score, r.financing_cost, consents(r), r.plan.id)
 
-    feasible = [r for r in results if r.feasible]
     return sorted(feasible, key=key)
 
 

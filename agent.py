@@ -457,10 +457,7 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
 
     # Stage C -- simulation for every candidate plan, base + stress
     plans = engine.enumerate_plans(case)
-    results = {p.id: engine.simulate(case, p, customer_payment_day, stress)
-               for p in plans}
-    for r in results.values():
-        r.tolerance = engine.delay_tolerance(case, r.plan, customer_payment_day)
+    results = simulate_all(case, plans, customer_payment_day, stress, with_tolerance=True)
     log.append(("C", "Cash-flow simulation",
                 f"{len(plans)} plans simulated for customer payment on day "
                 f"{customer_payment_day}, plus a +{stress_delay}-day late-payment "
@@ -527,6 +524,16 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
     )
 
 
+def simulate_all(case: Case, plans: list[engine.Plan], customer_payment_day: int,
+                 stress: list[int], with_tolerance: bool) -> dict[str, SimulationResult]:
+    """Engine simulation for every plan; optionally the delay-tolerance search too."""
+    results = {p.id: engine.simulate(case, p, customer_payment_day, stress) for p in plans}
+    if with_tolerance:
+        for r in results.values():
+            r.tolerance = engine.delay_tolerance(case, r.plan, customer_payment_day)
+    return results
+
+
 def sensitivity_scan(case: Case, priority: str, stress: list[int] | None = None
                      ) -> tuple[list[tuple[int, str]], int | None]:
     """Re-run the full decision for payment days 40..90; find the first flip."""
@@ -534,10 +541,9 @@ def sensitivity_scan(case: Case, priority: str, stress: list[int] | None = None
     flip = None
     baseline = None
     for day in range(40, 91):
-        ranked = engine.rank_plans(
-            [engine.simulate(case, p, day, stress or STRESS_DELAYS)
-             for p in engine.enumerate_plans(case)],
-            case, priority)
+        sims = simulate_all(case, engine.enumerate_plans(case), day, stress or STRESS_DELAYS,
+                            with_tolerance=priority == "most_robust")
+        ranked = engine.rank_plans(list(sims.values()), case, priority)
         label = ranked[0].plan.label if ranked else "Decline the order"
         if ranked and ranked[0].plan.id == "decline":
             label = "Decline the order"

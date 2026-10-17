@@ -100,3 +100,31 @@ def test_stress_choice_changes_robustness():
     r30 = agent.run_agent(CASE, 60, "maximize_margin", False, stress_delay=30)
     assert r15.results["adv25_ext0_OFF-3"].robust
     assert not r30.results["adv25_ext0_OFF-3"].robust
+
+
+# ------------------------------------------------------ most robust priority
+
+
+def test_most_robust_ranks_by_tolerance_then_cost_decline_last():
+    import agent
+    run = agent.run_agent(replace(CASE, reserve=D("11000")), 60, "most_robust", False,
+                          stress_delay=15)
+    # Only the OFF-3 credit line (repaid day 90) keeps 11,000; it tolerates 29 days.
+    assert run.winner.plan.id == "adv25_ext0_OFF-3"
+    assert run.winner.tolerance.days == 29
+    assert run.ranked[-1].plan.id == "decline"
+    tols = [r.tolerance.rank_value for r in run.ranked[:-1]]
+    assert tols == sorted(tols, reverse=True)
+
+
+def test_most_robust_recommends_decline_when_no_accept_plan_survives_stress():
+    import agent
+    run = agent.run_agent(replace(CASE, reserve=D("11000")), 60, "most_robust", False,
+                          stress_delay=30)  # 29 days of tolerance < 30
+    assert run.winner.plan.id == "decline"
+
+
+def test_default_acme_most_robust():
+    import agent
+    run = agent.run_agent(CASE, 60, "most_robust", False)
+    assert run.winner.plan.id == "adv50_ext0_nofin"  # never-pays-safe and free

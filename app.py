@@ -52,6 +52,7 @@ PRIORITY_LABELS = {
     "maximize_margin": "Maximize net margin (default)",
     "minimize_financing_cost": "Minimize financing cost",
     "avoid_customer_consent": "Do not depend on customer consent",
+    "most_robust": "Most robust to late payment",
 }
 
 BADGE = {"LOW": ("🟢", "#e8f7f0", GREEN), "MEDIUM": ("🟠", "#fdf1e7", ORANGE),
