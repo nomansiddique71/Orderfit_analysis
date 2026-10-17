@@ -34,6 +34,7 @@ class Movement:
     certain: bool = True
     deferrable_to: int | None = None  # target day if the supplier grants an extension
     due_day: int | None = None  # contractual due day (receivables); < 0 = already overdue today
+    tied_to_delivery: bool = False  # moves with the delivery date (e.g. paid on delivery)
 
 
 @dataclass(frozen=True)
@@ -153,10 +154,53 @@ class Case:
     order_costs: tuple[Movement, ...]  # costs caused by accepting the order
     financing_offers: tuple[FinancingOffer, ...]
     max_financing_cost: Decimal = D("2000")
+    supplier: str = ""  # counterparty whose prices a price-increase scenario changes
+    late_penalty_pct_per_week: Decimal = D("0")  # from the PO: % of order value per week late
 
     @property
     def gross_margin(self) -> Decimal:
         return self.order_value - sum((-m.amount for m in self.order_costs), ZERO)
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """A what-if applied on top of a plan. Default = everything as expected."""
+
+    key: str = "base"
+    label: str = "As expected"
+    customer_pays: bool = True
+    payment_fraction: Decimal = D("1")  # share of the balance the customer actually pays
+    supplier_price_increase_pct: Decimal = D("0")  # applies to case.supplier's costs
+    supplier_delay_days: int = 0  # delivery (and delivery-tied costs + payment) slips
+
+
+BASE = Scenario()
+
+
+def scenario_case(case: Case, sc: Scenario) -> Case:
+    """Cost-side effects of a scenario: supplier prices and the delivery date."""
+    from dataclasses import replace
+
+    if sc.supplier_price_increase_pct == 0 and sc.supplier_delay_days == 0:
+        return case
+    costs = []
+    for m in case.order_costs:
+        amount, day = m.amount, m.day
+        if sc.supplier_price_increase_pct and m.counterparty == case.supplier:
+            amount = money(amount * (1 + sc.supplier_price_increase_pct / D(100)))
+        if m.tied_to_delivery:
+            day += sc.supplier_delay_days
+        costs.append(replace(m, amount=amount, day=day))
+    return replace(case, order_costs=tuple(costs),
+                   delivery_day=case.delivery_day + sc.supplier_delay_days)
+
+
+def late_delivery_penalty(case: Case, delay_days: int) -> Decimal:
+    """PO penalty for late delivery; a started week counts as a full week."""
+    if delay_days <= 0:
+        return ZERO
+    weeks = -(-delay_days // 7)  # ceiling division
+    return money(case.order_value * case.late_penalty_pct_per_week / D(100) * weeks)
 
 
 # ---------------------------------------------------------------- simulation
@@ -190,12 +234,18 @@ def constraint_violations(case: Case, plan: Plan) -> list[str]:
     return out
 
 
-def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None
-                   ) -> list[Movement]:
+def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None,
+                   scenario: Scenario = BASE) -> list[Movement]:
     """All dated movements for a plan under one customer-payment scenario.
 
     customer_payment_day=None models a customer who never pays the balance.
+    scenario adds payment-side what-ifs (partial payment, late-delivery
+    penalty, payment slipping with delivery); cost-side effects come from
+    scenario_case().
     """
+    case = scenario_case(case, scenario)
+    if not scenario.customer_pays:
+        customer_payment_day = None
     if plan.id == "decline":
         return list(case.base_movements)  # declining the order: no order cash flows
     out: list[Movement] = list(case.base_movements)
@@ -211,7 +261,11 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None
     # final payment is the order value minus whatever was paid up front.
     advance = money(case.order_value * plan.advance_pct)
     if customer_payment_day is not None:
-        out.append(Movement(customer_payment_day, case.order_value - advance,
+        due = case.order_value - advance
+        if scenario.payment_fraction != 1:
+            due = money(due * scenario.payment_fraction)
+        due -= late_delivery_penalty(case, scenario.supplier_delay_days)
+        out.append(Movement(customer_payment_day + scenario.supplier_delay_days, max(due, ZERO),
                  "Customer payment (PO-8841)" + (" -- balance after advance" if advance else ""),
                  "order_revenue", "Meridian Retail Group"))
     if advance > 0:
@@ -312,6 +366,57 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
         low_path=low,
         violations=violations,
     )
+
+
+# ------------------------------------------------------------- scenarios
+
+ORDER_KINDS = {"order_cost", "order_revenue", "advance", "financing_draw", "financing_repay"}
+
+
+@dataclass
+class ScenarioOutcome:
+    scenario: Scenario
+    min_balance: Decimal
+    min_day: int
+    first_breach_day: int | None
+    order_net: Decimal  # all order-related cash in - out (incl. financing), whole horizon
+    violations: list[str]
+    penalty: Decimal
+
+    @property
+    def reserve_ok(self) -> bool:
+        return self.first_breach_day is None
+
+
+def evaluate_scenario(case: Case, plan: Plan, customer_payment_day: int,
+                      sc: Scenario) -> ScenarioOutcome:
+    movs = plan_movements(case, plan, customer_payment_day, sc)
+    low, _ = daily_balances(case.opening_cash, movs)
+    breach = [d for d in sorted(low) if low[d] < case.reserve]
+    min_day = min(low, key=lambda d: low[d])
+    return ScenarioOutcome(
+        scenario=sc, min_balance=low[min_day], min_day=min_day,
+        first_breach_day=breach[0] if breach else None,
+        order_net=sum((m.amount for m in movs if m.kind in ORDER_KINDS), ZERO),
+        violations=constraint_violations(scenario_case(case, sc), plan),
+        penalty=(late_delivery_penalty(case, sc.supplier_delay_days)
+                 if plan.id != "decline" and sc.customer_pays else ZERO),
+    )
+
+
+def money_at_risk(case: Case, plan: Plan) -> list[tuple[int, Decimal]]:
+    """If the customer cancels right after day d: order money already spent and
+    not covered by the advance (assumes supplier payments made are not refunded
+    and the advance is kept). One row per day an order cost is paid."""
+    if plan.id == "decline":
+        return []
+    movs = plan_movements(case, plan, None)
+    advance = sum((m.amount for m in movs if m.kind == "advance"), ZERO)
+    out, spent = [], ZERO
+    for day in sorted({m.day for m in movs if m.kind == "order_cost"}):
+        spent += sum((-m.amount for m in movs if m.kind == "order_cost" and m.day == day), ZERO)
+        out.append((day, max(spent - advance, ZERO)))
+    return out
 
 
 # --------------------------------------------------------- delay tolerance

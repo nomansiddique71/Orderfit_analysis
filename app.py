@@ -536,6 +536,39 @@ st.caption("✅ = reserve holds if the customer pays that many days late. Tolera
            "found by an exact search over payment days (paying later can only lower "
            "the balance, so the search is monotone).")
 
+st.markdown("#### What if… (scenarios on one plan)")
+sc_plans = [w] + [r for r in run.results.values() if r.plan.id not in (w.plan.id, "decline")]
+w1, w2, w3, w4 = st.columns([3, 1, 1, 1])
+sc_pick = w1.selectbox("Plan", sc_plans, format_func=lambda r: (
+    ("★ " if r.plan.id == w.plan.id else "") + r.plan.label))
+partial_pct = w2.number_input("Partial payment %", 0, 100, 70, step=5)
+price_pct = w3.number_input("Supplier price +%", 0, 100, 10, step=5)
+sup_delay = w4.number_input("Supplier late (days)", 0, 60, 14, step=1)
+outcomes = agent.scenario_table(case, sc_pick, pay_day,
+                                agent.standard_scenarios(partial_pct, price_pct, sup_delay))
+st.dataframe(pd.DataFrame([{
+    "Scenario": o.scenario.label,
+    "Lowest balance": float(o.min_balance), "Low day": o.min_day,
+    "Reserve": "met" if o.reserve_ok else f"breached day {o.first_breach_day}",
+    "Order cash result": float(o.order_net),
+    "Late penalty": float(o.penalty),
+    "Hard constraints": " ".join(o.violations) or "ok",
+} for o in outcomes]), hide_index=True, width="stretch")
+never = next(o for o in outcomes if o.scenario.key == "never")
+risk = engine.money_at_risk(case, sc_pick.plan)
+r1, r2 = st.columns([1, 2])
+r1.metric("Maximum loss if the customer never pays",
+          f"${fmt(max(-never.order_net, D(0)))}",
+          "everything spent on the order, less the advance", delta_color="off")
+if risk:
+    r2.dataframe(pd.DataFrame([{"If cancelled after day": d, "Money at risk": float(v)}
+                               for d, v in risk]), hide_index=True, width="stretch")
+st.caption("Order cash result = all order-related cash in minus out over the horizon, "
+           "including financing. Cancellation assumes supplier payments already made "
+           "are not refunded (the quote says the deposit is non-refundable) and the "
+           "advance is kept. Late supplier delivery shifts delivery-tied costs and the "
+           "customer's payment, and applies the PO penalty per started week.")
+
 st.markdown("#### Assumptions")
 st.markdown(f"""
 - Customer pays the full \\${fmt(case.order_value)} (less any advance) on **day {pay_day}**

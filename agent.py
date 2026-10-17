@@ -342,6 +342,30 @@ def _overdue_alerts(case: Case, as_is: SimulationResult, winner: SimulationResul
     return out
 
 
+# ------------------------------------------------------------- scenarios
+
+
+def standard_scenarios(partial_pct: int = 70, price_increase_pct: int = 10,
+                       supplier_delay_days: int = 14) -> list[engine.Scenario]:
+    """The what-if set shown to the owner (parameters are owner-editable)."""
+    return [
+        engine.BASE,
+        engine.Scenario("partial", f"Customer pays only {partial_pct}% of the balance",
+                        payment_fraction=D(partial_pct) / 100),
+        engine.Scenario("never", "Customer never pays the balance", customer_pays=False),
+        engine.Scenario("price", f"Supplier raises prices {price_increase_pct}%",
+                        supplier_price_increase_pct=D(price_increase_pct)),
+        engine.Scenario("late", f"Supplier delivers {supplier_delay_days} days late",
+                        supplier_delay_days=supplier_delay_days),
+    ]
+
+
+def scenario_table(case: Case, result: SimulationResult, customer_payment_day: int,
+                   scenarios: list[engine.Scenario]) -> list[engine.ScenarioOutcome]:
+    return [engine.evaluate_scenario(case, result.plan, customer_payment_day, sc)
+            for sc in scenarios]
+
+
 # ------------------------------------------------------------- near tie
 
 

@@ -77,8 +77,11 @@ CASE = Case(
                  deferrable_to=40),
         Movement(20, D("-5000"), "Supplier pre-delivery payment", "order_cost",
                  "Brightwave Supplies", deferrable_to=40),
-        Movement(30, D("-1500"), "Shipping & handling", "order_cost", "Freeline Logistics"),
+        Movement(30, D("-1500"), "Shipping & handling", "order_cost", "Freeline Logistics",
+                 tied_to_delivery=True),
     ),
+    supplier="Brightwave Supplies",
+    late_penalty_pct_per_week=D("1"),  # PO-8841: 1% of order value per week delayed
     financing_offers=(
         FinancingOffer("OFF-1", "Lumina Capital", D("15000"), D("3.5"), D("150"),
                        draw_day=0, repay_day=61, expires_day=3,

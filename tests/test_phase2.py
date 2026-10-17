@@ -166,3 +166,40 @@ def test_minimum_safe_loan_offered_as_plan_and_portal_checks_range():
     assert portal.accept("OFF-3", terms)[0]
     assert not portal.accept("OFF-3", {**terms, "principal": "25000"})[0]  # above max
     assert not portal.accept("OFF-3", {**terms, "monthly_rate_pct": "0.5"})[0]  # invented rate
+
+
+# ------------------------------------------------------------- scenarios
+
+
+def _outcomes(pid):
+    import agent
+    return {o.scenario.key: o for o in agent.scenario_table(
+        CASE, engine.simulate(CASE, _plan(pid), 60), 60, agent.standard_scenarios())}
+
+
+def test_scenarios_hand_checked_for_50pct_advance():
+    o = _outcomes("adv50_ext0_nofin")
+    assert o["base"].order_net == D("11500.00")
+    # 70% of the 15,000 balance = 10,500; 15,000 + 10,500 - 18,500 costs = 7,000
+    assert o["partial"].order_net == D("7000.00") and o["partial"].reserve_ok
+    # never pays: 15,000 advance - 18,500 costs = -3,500 (maximum loss 3,500)
+    assert o["never"].order_net == D("-3500.00")
+    # +10% on Brightwave's 12,000 + 5,000 = +1,700 -> low 10,500 - 1,700 = 8,800
+    assert o["price"].min_balance == D("8800.00") and o["price"].order_net == D("9800.00")
+    # 14 days late = 2 started weeks x 1% x 30,000 = 600 penalty; delivery day 44 > 30
+    assert o["late"].penalty == D("600.00") and o["late"].order_net == D("10900.00")
+    assert any("day 44" in v for v in o["late"].violations)
+
+
+def test_price_increase_moves_as_is_breach_earlier():
+    # 30,000 - 13,200 = 16,800; -3,000 (d10) = 13,800; -7,000 (d15) = 6,800 < 8,000
+    o = _outcomes("accept-as-is")
+    assert o["base"].first_breach_day == 20 and o["price"].first_breach_day == 15
+
+
+def test_money_at_risk_by_cancellation_day():
+    assert engine.money_at_risk(CASE, _plan("accept-as-is")) == [
+        (0, D("12000")), (20, D("17000")), (30, D("18500"))]
+    # the 15,000 advance covers the deposit; risk starts with the day-20 payment
+    assert engine.money_at_risk(CASE, _plan("adv50_ext0_nofin")) == [
+        (0, D("0")), (20, D("2000.00")), (30, D("3500.00"))]
