@@ -158,13 +158,17 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int) -> list[Mo
             )
         else:
             out.append(m)
+    # The advance is part of the order value, not extra money: the customer's
+    # final payment is the order value minus whatever was paid up front.
+    advance = money(case.order_value * plan.advance_pct)
     out.append(
-        Movement(customer_payment_day, case.order_value, "Customer payment (PO-8841)",
+        Movement(customer_payment_day, case.order_value - advance,
+                 "Customer payment (PO-8841)" + (" -- balance after advance" if advance else ""),
                  "order_revenue", "Meridian Retail Group")
     )
-    if plan.advance_pct > 0:
+    if advance > 0:
         out.append(
-            Movement(0, money(case.order_value * plan.advance_pct),
+            Movement(0, advance,
                      f"Customer advance ({plan.advance_pct * 100:.0f}%)", "advance",
                      "Meridian Retail Group", certain=False)
         )
