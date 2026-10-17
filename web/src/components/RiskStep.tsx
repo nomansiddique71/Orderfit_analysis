@@ -3,6 +3,7 @@ import { ArrowRight, Bell, CalendarClock, CircleAlert, ListOrdered, OctagonX, Sc
 import type { Analysis } from "../api";
 import { money } from "../format";
 import { CashChart } from "./CashChart";
+import { CashWalk } from "./CashWalk";
 import { Callout, Card, LoadingButton, Pill, SectionTitle, Segmented, Stat, Updating } from "./ui";
 
 const LEVEL = { LOW: ["green", "Low uncertainty"], MEDIUM: ["amber", "Medium uncertainty"], HIGH: ["red", "High uncertainty"] } as const;
@@ -77,6 +78,7 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext, updating }
     <Updating active={updating}>
     <div className="space-y-6">
       <Verdict a={a} onConfirm={onConfirm} updating={updating} />
+      <CashWalk a={a} />
 
       {readings.length > 0 && (
         <Card className="p-5">
@@ -129,7 +131,7 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext, updating }
                     <td className={`text-right font-medium ${m.amount < 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(m.amount, cur, { sign: true })}</td>
                   </tr>
                 ))}
-                <tr className="border-t border-slate-100"><td className="py-1.5 text-slate-500">{a.case.pay_day}</td><td>Customer pays the order<div className="text-xs text-slate-400">{a.case.customer}</div></td><td className="text-right font-medium text-emerald-700">{money(a.case.order_value, cur, { sign: true })}</td></tr>
+                <tr className="border-t border-slate-100"><td className="py-1.5 text-slate-500">{a.case.pay_day}</td><td>Customer pays {a.case.advance_received > 0 ? "the rest of " : ""}the order<div className="text-xs text-slate-400">{a.case.customer}{a.case.advance_received > 0 && ` · ${money(a.case.advance_received, cur)} advance already received`}</div></td><td className="text-right font-medium text-emerald-700">{money(a.case.balance_due, cur, { sign: true })}</td></tr>
               </tbody>
             </table>
           </div>

@@ -41,7 +41,8 @@ export interface Analysis {
   ok: boolean; missing?: string[];
   case: {
     name: string; currency: string; business: string; opening_cash: number; reserve: number;
-    order_value: number; gross_margin: number; delivery_day: number; customer: string; supplier: string;
+    order_value: number; gross_margin: number; delivery_day: number;
+    advance_received: number; balance_due: number; costs_already_paid: number; customer: string; supplier: string;
     order_ref: string; pay_day: number; document_pay_day: number; max_financing_cost: number;
     assumptions: string[]; payment_readings: Record<string, number>; basis_used: string;
     movements: { day: number; amount: number; label: string; counterparty: string; kind: string }[];
@@ -54,6 +55,7 @@ export interface Analysis {
     execution_blocks: string[];
   };
   gap: { amount: number; from_day: number | null; until_day: number | null; days: number };
+  walk: { asis: CashWalk; recommended: CashWalk };
   plans: Plan[];
   alerts: { rule: string; day: number | null; message: string; severity: Severity }[];
   flags: Flag[];
@@ -66,6 +68,11 @@ export interface Analysis {
   approval: Approval | null;
   executed: Execution | null;
   ai: { label: string; gemini: boolean };
+}
+export interface CashWalk {
+  plan: string; opening: number; reserve: number; low: number; low_day: number; headroom: number; end: number;
+  out_until_low: Record<string, number>; in_until_low: Record<string, number>;
+  rows: { day: number; label: string; group: string; kind: string; amount: number; balance: number; below_reserve: boolean }[];
 }
 export interface Approval { id: string; plan_id: string; label: string; override: boolean; reason: string; version: string }
 export interface Execution {

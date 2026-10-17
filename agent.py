@@ -762,3 +762,46 @@ def draft_message(winner: SimulationResult, case: Case, pay_day: int,
             f"{f.draw_day}, repay {cur} {f.principal + f.cost():,.0f} on day "
             f"{f.repay_day} ({f.terms_text()}). Please confirm and issue the "
             f"drawdown notice.")
+
+
+# ------------------------------------------------------------- cash walk
+
+WALK_GROUPS = {
+    "payroll": "Payroll", "obligation": "Existing bills", "receivable": "Money owed to you",
+    "order_cost": "This order's costs", "order_revenue": "Customer payment",
+    "advance": "Customer advance", "financing_draw": "Loan", "financing_repay": "Loan repayment",
+}
+
+
+def cash_walk(case: Case, plan: engine.Plan, pay_day: int) -> dict:
+    """Explain one plan's cash path in owner terms, using only engine numbers.
+
+    rows: every movement in date order with the balance after it. Within a day,
+    money out comes before money in (the engine's same-day rule), so the lowest
+    running balance here is exactly the engine's intra-day low.
+    until_low: what goes out and comes in from today up to the lowest point,
+    grouped (payroll, existing bills, order costs, ...).
+    """
+    movs = sorted(engine.plan_movements(case, plan, pay_day),
+                  key=lambda m: (m.day, m.amount >= 0, m.label))
+    running, rows = case.opening_cash, []
+    low_i, low = -1, case.opening_cash
+    for i, m in enumerate(movs):
+        running += m.amount
+        rows.append({"day": m.day, "label": m.label, "group": WALK_GROUPS.get(m.kind, m.kind),
+                     "kind": m.kind, "amount": m.amount, "balance": running,
+                     "below_reserve": running < case.reserve})
+        if running < low:
+            low_i, low = i, running
+    out: dict[str, Decimal] = {}
+    inn: dict[str, Decimal] = {}
+    for r in rows[:low_i + 1]:
+        bucket = out if r["amount"] < 0 else inn
+        bucket[r["group"]] = bucket.get(r["group"], Decimal(0)) + abs(r["amount"])
+    low_day = rows[low_i]["day"] if low_i >= 0 else 0
+    return {
+        "plan": plan.label, "opening": case.opening_cash, "reserve": case.reserve,
+        "low": low, "low_day": low_day, "headroom": low - case.reserve,
+        "out_until_low": out, "in_until_low": inn,
+        "end": running, "rows": rows,
+    }

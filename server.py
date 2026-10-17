@@ -421,6 +421,9 @@ def analyze(req: AnalyzeReq):
         "case": {"name": case.name, "currency": profile.currency, "business": profile.name,
                  "opening_cash": num(case.opening_cash), "reserve": num(case.reserve),
                  "order_value": num(case.order_value), "gross_margin": num(case.gross_margin),
+                 "advance_received": num(case.advance_received),
+                 "balance_due": num(case.balance_due),
+                 "costs_already_paid": num(case.costs_already_paid),
                  "delivery_day": case.delivery_day, "customer": case.customer,
                  "supplier": case.supplier, "order_ref": case.order_ref, "pay_day": pay_day,
                  "document_pay_day": built.customer_payment_day,
@@ -445,6 +448,8 @@ def analyze(req: AnalyzeReq):
             "owner_tie_choice": run.owner_tie_choice,
             "execution_blocks": run.execution_blocks,
         },
+        "walk": {k: _walk_json(agent.cash_walk(case, run.results[pid].plan, pay_day))
+                 for k, pid in (("asis", "accept-as-is"), ("recommended", run.winner.plan.id))},
         "gap": {"amount": num(gap.amount), "from_day": gap.from_day,
                 "until_day": gap.until_day, "days": gap.days},
         "plans": [_plan_json(r, run, versions[r.plan.id]) for r in ordered],
@@ -470,6 +475,15 @@ def analyze(req: AnalyzeReq):
         "executed": s.executed,
         "ai": {"label": gemini_client.backend_label(), "gemini": gemini_client.gemini_available()},
     }
+
+
+def _walk_json(w: dict) -> dict:
+    return {**{k: num(w[k]) for k in ("opening", "reserve", "low", "headroom", "end")},
+            "plan": w["plan"], "low_day": w["low_day"],
+            "out_until_low": {k: num(v) for k, v in w["out_until_low"].items()},
+            "in_until_low": {k: num(v) for k, v in w["in_until_low"].items()},
+            "rows": [{**r, "amount": num(r["amount"]), "balance": num(r["balance"])}
+                     for r in w["rows"]]}
 
 
 def _approval_json(s: Session) -> dict | None:

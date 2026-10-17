@@ -150,3 +150,18 @@ def test_unknown_session_and_bad_input():
     _sample(sid, "clean")
     assert client.post("/api/analyze", json={"session_id": sid, "priority": "x"}).status_code == 400
     assert client.post("/api/analyze", json={"session_id": sid, "stress_delay": 7}).status_code == 400
+
+
+@pytest.mark.parametrize("pack", ["clean", "fraud", "injection", "ambiguous"])
+def test_cash_walk_matches_engine_lowest_point(pack):
+    """The owner-facing explanation uses the engine's own numbers: its lowest
+    point and day equal the plan's simulated minimum on every sample."""
+    sid = _session()
+    _sample(sid, pack)
+    r = _analyze(sid)
+    plans = {p["id"]: p for p in r["plans"]}
+    for key, pid in (("asis", "accept-as-is"), ("recommended", r["verdict"]["winner"])):
+        w = r["walk"][key]
+        assert (w["low"], w["low_day"]) == (plans[pid]["min_balance"], plans[pid]["min_day"]), (key, pid)
+        assert w["headroom"] == w["low"] - r["case"]["reserve"]
+        assert sum(w["out_until_low"].values()) - sum(w["in_until_low"].values()) == w["opening"] - w["low"]
