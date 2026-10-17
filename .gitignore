@@ -17,3 +17,4 @@ install.sh
 # Frontend build output and dependencies
 web/node_modules/
 web/dist/
+web/*.tsbuildinfo
