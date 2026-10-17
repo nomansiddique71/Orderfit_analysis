@@ -122,3 +122,33 @@ def test_low_confidence_non_simulation_field_is_not_provisional():
     import agent
     f = agent.ExtractedField("Deposit refundability", "x", "Q-3312", "x", 0.4)
     assert f.low_confidence and not f.affects_simulation
+
+
+# ------------------------------------------------------------ near tie
+
+
+def test_default_acme_has_no_near_tie():
+    # 50% advance + supplier extension has the same margin but is dominated
+    # (same headroom, more consents), so the owner is not asked.
+    import agent
+    assert agent.run_agent(CASE, 60, "maximize_margin", False).near_tie is None
+
+
+def test_near_tie_detected_and_owner_choice_wins():
+    import agent
+    case = replace(CASE, reserve=D("5000"))
+    run = agent.run_agent(case, 60, "avoid_customer_consent", False)
+    top, other = run.near_tie
+    # OFF-2 costs 500 and OFF-1 costs 675: 175 apart, inside 1% of 30,000 (= 300).
+    assert top.plan.id == "adv0_ext0_OFF-2" and other.plan.id == "adv0_ext0_OFF-1"
+    assert run.winner.plan.id == "adv0_ext0_OFF-2"
+    assert "higher net margin (+175)" in agent.plan_strengths(top, other)
+    assert any("more cash headroom" in s for s in agent.plan_strengths(other, top))
+
+    chosen = agent.run_agent(case, 60, "avoid_customer_consent", False,
+                             tie_choice="adv0_ext0_OFF-1")
+    assert chosen.winner.plan.id == "adv0_ext0_OFF-1"
+    assert chosen.owner_tie_choice == "adv0_ext0_OFF-1"
+    # a choice outside the tied pair is ignored
+    bogus = agent.run_agent(case, 60, "avoid_customer_consent", False, tie_choice="decline")
+    assert bogus.winner.plan.id == "adv0_ext0_OFF-2"

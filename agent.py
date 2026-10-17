@@ -21,6 +21,7 @@ D = Decimal
 ZERO = D("0")
 
 STRESS_DELAYS = [15]  # customer pays 15 days late
+NEAR_TIE_PCT = D("0.01")  # top plans within 1% of order value in net margin = near tie
 
 
 # ------------------------------------------------------------------ stage A
@@ -335,6 +336,47 @@ def _overdue_alerts(case: Case, as_is: SimulationResult, winner: SimulationResul
     return out
 
 
+# ------------------------------------------------------------- near tie
+
+
+def plan_strengths(a: SimulationResult, b: SimulationResult) -> list[str]:
+    """What plan a does better than plan b, in owner terms."""
+    out = []
+    if a.net_margin > b.net_margin:
+        out.append(f"higher net margin (+{a.net_margin - b.net_margin:,.0f})")
+    if a.min_balance > b.min_balance:
+        out.append(f"more cash headroom (lowest {a.min_balance:,.0f} vs {b.min_balance:,.0f})")
+    consents = lambda r: int(r.depends_on_customer_consent) + int(r.depends_on_supplier_consent)  # noqa: E731
+    if consents(a) < consents(b):
+        out.append("needs fewer counterparty consents")
+    if a.depends_on_customer_consent and a.plan.advance_pct < b.plan.advance_pct:
+        out.append(f"asks the customer for a smaller advance "
+                   f"({a.plan.advance_pct * 100:.0f}% vs {b.plan.advance_pct * 100:.0f}%)")
+    if a.robust and not b.robust:
+        out.append("survives the late-payment stress")
+    return out
+
+
+def find_near_tie(ranked: list[SimulationResult], case: Case
+                  ) -> tuple[SimulationResult, SimulationResult] | None:
+    """Top plan and the first runner-up that is close on margin AND a real trade-off.
+
+    A runner-up that is no better than the top plan on any dimension (margin,
+    headroom, consents, robustness) is dominated: the ranking is right and we
+    do not bother the owner. Engine numbers only; nothing is re-computed here.
+    """
+    if len(ranked) < 2:
+        return None
+    top = ranked[0]
+    margin = case.order_value * NEAR_TIE_PCT
+    for r in ranked[1:]:
+        if top.net_margin - r.net_margin > margin:
+            break  # ranked list is sorted; later plans are further away
+        if abs(top.net_margin - r.net_margin) <= margin and plan_strengths(r, top):
+            return top, r
+    return None
+
+
 # ------------------------------------------------------- stages A-E, memo
 
 
@@ -361,6 +403,8 @@ class AgentRun:
     extraction_note: str = ""
     # low-confidence simulation fields the owner has not confirmed yet
     provisional_fields: list[ExtractedField] = field(default_factory=list)
+    near_tie: tuple[SimulationResult, SimulationResult] | None = None
+    owner_tie_choice: str | None = None  # plan id the owner picked to break a near tie
 
     @property
     def provisional(self) -> bool:
@@ -368,12 +412,15 @@ class AgentRun:
 
 
 def run_agent(case: Case, customer_payment_day: int, priority: str,
-              injected: bool, confirmed: frozenset[str] = frozenset()) -> AgentRun:
+              injected: bool, confirmed: frozenset[str] = frozenset(),
+              tie_choice: str | None = None) -> AgentRun:
     """Run stages A-E.
 
     confirmed: ExtractedField.key values the owner has explicitly confirmed.
     Any low-confidence field that affects the simulation and is not in this
     set makes the whole result provisional.
+    tie_choice: plan id the owner picked when the top two plans were a near
+    tie. Ignored unless it is one of the two tied plans.
     """
     from case_data import QUOTE_TEXT, po_text
 
@@ -423,13 +470,21 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
     decline = results["decline"]
     if priority_conflict:
         winner = decline if decline.feasible else winner
+    near_tie = None if priority_conflict else find_near_tie(ranked, case)
+    owner_tie_choice = None
+    if near_tie and tie_choice in (near_tie[0].plan.id, near_tie[1].plan.id):
+        owner_tie_choice = tie_choice
+        winner = results[tie_choice]
     log.append(("D", "Option generation & selection",
                 f"Exhaustive enumeration over the defined action set; "
                 f"{sum(1 for r in ranked if r.feasible)} of {len(plans)} plans meet the "
                 f"reserve and hard constraints in the base scenario; owner priority "
                 f"'{priority}' applied. "
                 + ("Priority conflicts with every feasible plan -- escalating."
-                   if priority_conflict else f"Winner: {winner.plan.label}.")))
+                   if priority_conflict else f"Winner: {winner.plan.label}.")
+                + (f" Near tie with '{near_tie[1].plan.label}'"
+                   + (" -- owner chose." if owner_tie_choice else " -- owner asked to choose.")
+                   if near_tie else "")))
 
     sensitivity, flip_day = sensitivity_scan(case, priority)
     log.append(("E", "Memo, sensitivity & drafting",
@@ -455,6 +510,7 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
         flip_day=flip_day, min_advance=min_advance, draft_message=draft,
         questions=questions, extraction_mode=extraction_mode,
         extraction_note=extraction_note, provisional_fields=provisional_fields,
+        near_tie=near_tie, owner_tie_choice=owner_tie_choice,
     )
 
 

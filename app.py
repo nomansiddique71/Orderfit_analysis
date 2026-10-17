@@ -156,8 +156,16 @@ def _confirm_field(key: str) -> None:
                                 f"owner confirmed {key}")
 
 
+def _choose_tie(plan_id: str) -> None:
+    st.session_state.tie_choice = {"sig": sig, "plan": plan_id}
+    st.session_state.log.append("owner_break_tie", "T1", {"plan": plan_id}, None,
+                                f"owner chose {plan_id} in a near tie")
+
+
+tie_state = st.session_state.get("tie_choice") or {}
 run = agent.run_agent(case, pay_day, priority, injected,
-                      confirmed=frozenset(st.session_state.confirmed))
+                      confirmed=frozenset(st.session_state.confirmed),
+                      tie_choice=tie_state.get("plan") if tie_state.get("sig") == sig else None)
 w = run.winner
 st.session_state.log.append("run_agent", "T0", {"pay_day": pay_day, "priority": priority},
                             None, f"decision: {w.plan.label}")
@@ -245,6 +253,32 @@ if run.priority_conflict:
              f"'{PRIORITY_LABELS[priority]}'. The best feasible plan "
              f"({run.ranked[0].plan.label}) conflicts with it; the agent declines "
              f"rather than recommend a plan that breaks your priority.")
+
+if run.near_tie:
+    top, alt_r = run.near_tie
+    with st.container(border=True):
+        if run.owner_tie_choice:
+            st.success(f"**Near tie resolved by you:** "
+                       f"{run.results[run.owner_tie_choice].plan.label}. "
+                       f"Change it below if you prefer the other plan.", icon="⚖️")
+        else:
+            st.warning(f"**Near tie — your call.** The top two plans are within "
+                       f"${fmt(case.order_value * agent.NEAR_TIE_PCT)} of net margin and "
+                       f"each is better on something. Which matters more to you?",
+                       icon="⚖️")
+        t1, t2 = st.columns(2)
+        for col, mine, other in ((t1, top, alt_r), (t2, alt_r, top)):
+            with col:
+                st.markdown(f"**{mine.plan.label}**  \n"
+                            f"Net margin ${fmt(mine.net_margin)} · lowest "
+                            f"${fmt(mine.min_balance)} (day {mine.min_day}) · "
+                            f"cost ${fmt(mine.financing_cost)}")
+                st.markdown("Better on: " + "; ".join(agent.plan_strengths(mine, other))
+                            if agent.plan_strengths(mine, other) else "_No advantage._")
+                st.button("Prefer this plan", key=f"tie_{mine.plan.id}",
+                          on_click=_choose_tie, args=(mine.plan.id,),
+                          type="primary" if w.plan.id == mine.plan.id else "secondary",
+                          use_container_width=True)
 
 # ------------------------------------------------- section: ask the agent
 

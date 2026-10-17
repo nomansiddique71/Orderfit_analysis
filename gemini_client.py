@@ -176,6 +176,9 @@ def _memo_text(run) -> str:
                        for r in run.ranked[1:5]],
         "uncertainty": uncertainty_text(run),
         "open_questions": run.questions,
+        "near_tie_with": (run.near_tie[1].plan.label
+                          if getattr(run, "near_tie", None) else None),
+        "owner_broke_tie": bool(getattr(run, "owner_tie_choice", None)),
         "provisional_waiting_for_owner_confirmation": [
             {"field": f.name, "value": f.value, "confidence": f.confidence}
             for f in getattr(run, "provisional_fields", [])],
