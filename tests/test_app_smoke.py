@@ -15,3 +15,11 @@ def test_app_renders_offline():
     at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
     at.run()
     assert not at.exception, at.exception
+
+
+def test_app_renders_with_late_delivery():
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
+    at.run()
+    next(s for s in at.slider if s.label == "Supplier delivery day").set_value(35).run()
+    assert not at.exception, at.exception
+    assert any("excluded by hard constraints" in e.label for e in at.expander)

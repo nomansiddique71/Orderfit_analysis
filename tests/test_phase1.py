@@ -49,3 +49,33 @@ def test_intraday_dip_is_a_breach():
     assert r.low_path[15] == D("20000")
     assert r.first_breach_day == 15
     assert not r.feasible
+
+
+# ------------------------------------------------------ hard constraints
+
+
+def test_financing_cost_cap_is_enforced():
+    # OFF-1 costs 675 (3.5% of 15,000 + 150). A cap of 600 must exclude it.
+    case = replace(CASE, max_financing_cost=D("600"))
+    r = simulate(case, _plan("adv0_ext0_OFF-1"), 60)
+    assert any("exceeds the cap" in v for v in r.violations)
+    assert not r.feasible
+    # OFF-2 costs 500, under the cap: no violation
+    r2 = simulate(case, _plan("adv50_ext1_OFF-2"), 60)
+    assert r2.violations == [] and r2.feasible
+
+
+def test_late_delivery_makes_accept_plans_infeasible():
+    case = replace(CASE, delivery_day=35)
+    r = simulate(case, _plan("adv50_ext0_nofin"), 60)
+    assert r.reserve_ok  # cash is fine...
+    assert not r.feasible  # ...but delivery misses day 30
+    assert any("misses the required day 30" in v for v in r.violations)
+    assert simulate(case, _plan("decline"), 60).feasible
+
+
+def test_violations_raise_alert_and_winner_is_decline():
+    import agent
+    run = agent.run_agent(replace(CASE, delivery_day=35), 60, "maximize_margin", False)
+    assert run.winner.plan.id == "decline"
+    assert any(a.rule == "constraint_violation" for a in run.alerts)

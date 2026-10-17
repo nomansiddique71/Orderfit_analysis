@@ -79,7 +79,7 @@ class SimulationResult:
     financing_cost: Decimal
     gross_margin: Decimal  # order value - order costs (0 for decline)
     net_margin: Decimal  # gross margin - financing cost
-    feasible: bool  # no breach in the base scenario
+    feasible: bool  # no reserve breach in the base scenario AND no hard-constraint violation
     robust: bool  # no breach in base AND every stress scenario
     stress_fail_day: int | None  # first breach day under stress, if any
     depends_on_customer_consent: bool
@@ -87,6 +87,12 @@ class SimulationResult:
     # day -> lowest balance within the day (outflows applied before inflows).
     # Breaches and min_balance are measured on this, not on end-of-day.
     low_path: dict[int, Decimal] = field(default_factory=dict)
+    # hard constraints other than the reserve (delivery date, financing-cost cap)
+    violations: list[str] = field(default_factory=list)
+
+    @property
+    def reserve_ok(self) -> bool:
+        return self.first_breach_day is None
 
 
 @dataclass(frozen=True)
@@ -108,6 +114,20 @@ class Case:
 
 
 # ---------------------------------------------------------------- simulation
+
+
+def constraint_violations(case: Case, plan: Plan) -> list[str]:
+    """Hard constraints besides the reserve. Decline commits to nothing."""
+    if plan.id == "decline":
+        return []
+    out: list[str] = []
+    if case.delivery_day > case.required_delivery_day:
+        out.append(f"Delivery on day {case.delivery_day} misses the required day "
+                   f"{case.required_delivery_day}.")
+    if plan.financing is not None and plan.financing.cost() > case.max_financing_cost:
+        out.append(f"Financing cost {plan.financing.cost():,.0f} exceeds the cap of "
+                   f"{case.max_financing_cost:,.0f}.")
+    return out
 
 
 def plan_movements(case: Case, plan: Plan, customer_payment_day: int) -> list[Movement]:
@@ -204,6 +224,8 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
             stress_fail = sbreach[0]
             break
 
+    violations = constraint_violations(case, plan)
+    feasible = first_breach is None and not violations
     gross = case.gross_margin if plan.id != "decline" else ZERO
     return SimulationResult(
         plan=plan,
@@ -215,12 +237,13 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
         financing_cost=cost if plan.id != "decline" else ZERO,
         gross_margin=gross,
         net_margin=gross - cost,
-        feasible=first_breach is None,
-        robust=stress_fail is None and first_breach is None,
+        feasible=feasible,
+        robust=stress_fail is None and feasible,
         stress_fail_day=stress_fail,
         depends_on_customer_consent=plan.depends_on_customer_consent,
         depends_on_supplier_consent=plan.depends_on_supplier_consent,
         low_path=low,
+        violations=violations,
     )
 
 

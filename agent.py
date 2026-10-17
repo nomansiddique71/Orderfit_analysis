@@ -238,7 +238,8 @@ class Alert:
     severity: str  # critical | warning | info
 
 
-def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult) -> list[Alert]:
+def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
+                 results: dict[str, SimulationResult] | None = None) -> list[Alert]:
     alerts: list[Alert] = []
     if as_is.first_breach_day is not None:
         alerts.append(Alert(
@@ -260,6 +261,13 @@ def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult) 
                 f"before {i.label} ({i.amount:,.0f}) arrives on day {i.day}.",
                 "warning"))
             break
+    violated = [r for r in results.values() if r.violations] if results else []
+    if violated:
+        reasons = sorted({v for r in violated for v in r.violations})
+        alerts.append(Alert(
+            "constraint_violation", None,
+            f"{len(violated)} plan(s) excluded by hard constraints: " + " ".join(reasons),
+            "critical" if any(r.plan.id == "accept-as-is" for r in violated) else "warning"))
     for offer in case.financing_offers:
         alerts.append(Alert(
             "offer_expiry", offer.expires_day,
@@ -362,7 +370,7 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
                 f"first flip at day {flip_day if flip_day is not None else '-'}."))
 
     min_advance = engine.minimum_advance(case, customer_payment_day, STRESS_DELAYS)
-    alerts = raise_alerts(case, as_is, winner)
+    alerts = raise_alerts(case, as_is, winner, results)
     draft = draft_message(winner, case, customer_payment_day, min_advance)
 
     return AgentRun(

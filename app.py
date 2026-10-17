@@ -105,6 +105,14 @@ with st.sidebar:
                               int(CASE.reserve), step=500)
     priority = st.selectbox("Owner priority (ranked first)",
                             list(PRIORITY_LABELS), format_func=PRIORITY_LABELS.get)
+    with st.expander("Hard constraints"):
+        max_fin_cost = st.number_input(
+            "Max financing cost (USD)", 0, 50_000, int(CASE.max_financing_cost), step=50,
+            help="Any plan whose financing cost exceeds this cap is infeasible.")
+        delivery_day = st.slider(
+            "Supplier delivery day", 20, 60, CASE.delivery_day,
+            help=f"PO requires delivery by day {CASE.required_delivery_day}. "
+                 "A later delivery makes every accept plan infeasible.")
     injected = st.checkbox("Inject instruction into the PO (security demo)",
                            help="Adds a prompt-injection line to the purchase order. "
                                 "The agent must treat it as data and flag it.")
@@ -120,7 +128,7 @@ with st.sidebar:
 
 # ------------------------------------------------------------------- state
 
-sig_src = f"{pay_day}|{reserve}|{priority}|{injected}"
+sig_src = f"{pay_day}|{reserve}|{priority}|{injected}|{max_fin_cost}|{delivery_day}"
 sig = hashlib.sha256(sig_src.encode()).hexdigest()[:10]
 
 if st.session_state.get("sig") != sig:
@@ -133,10 +141,10 @@ if st.session_state.get("sig") != sig:
     st.session_state.approvals = {}
     st.session_state.executed: ExecutionReport | None = None
 
-case = CASE
-if reserve != int(case.reserve):
-    from dataclasses import replace as _replace
-    case = _replace(case, reserve=D(str(reserve)))
+from dataclasses import replace as _replace
+
+case = _replace(CASE, reserve=D(str(reserve)), max_financing_cost=D(str(max_fin_cost)),
+                delivery_day=delivery_day)
 
 run = agent.run_agent(case, pay_day, priority, injected)
 w = run.winner
@@ -247,19 +255,29 @@ elif not st.session_state.get("last_answer"):
 
 # ------------------------------------------------------ section: the problem
 
-st.markdown("## 1 · Why the order is unsafe as-is")
+st.markdown("## 1 · Is the order safe as-is?")
 d1, d2 = st.columns([3, 2])
 with d1:
-    st.markdown(
-        f"Accepting as-is first breaches the **${fmt(case.reserve)}** reserve on "
-        f"**day {asis.first_breach_day}** and bottoms out at "
-        f"**${fmt(asis.min_balance)} on day {asis.min_day}** — a profitable order "
-        f"(${fmt(case.gross_margin)} gross margin) that cannot be funded on the "
-        f"current payment terms.")
+    if asis.first_breach_day is not None:
+        st.markdown(
+            f"Accepting as-is first breaches the **${fmt(case.reserve)}** reserve on "
+            f"**day {asis.first_breach_day}** and bottoms out at "
+            f"**${fmt(asis.min_balance)} on day {asis.min_day}** — a profitable order "
+            f"(${fmt(case.gross_margin)} gross margin) that cannot be funded on the "
+            f"current payment terms.")
+    else:
+        st.markdown(
+            f"Accepting as-is keeps cash at or above the **${fmt(case.reserve)}** "
+            f"reserve on every day (lowest **${fmt(asis.min_balance)} on day "
+            f"{asis.min_day}**).")
+    if asis.violations:
+        st.error("**Hard constraint violated:** " + " ".join(asis.violations))
 with d2:
     alert_title = {"reserve_breach": "Reserve breach",
                    "payment_before_receipt": "Payment before receipt",
-                   "offer_expiry": "Offer expiry", "fragile_plan": "Fragile plan"}
+                   "offer_expiry": "Offer expiry", "fragile_plan": "Fragile plan",
+                   "constraint_violation": "Hard constraint",
+                   "overdue_receivable": "Overdue receivable"}
     for a in sorted(run.alerts, key=lambda a: {"critical": 0, "warning": 1}.get(a.severity, 2)):
         show = {"critical": st.error, "warning": st.warning}.get(a.severity, st.info)
         show(f"🔔 **{alert_title.get(a.rule, a.rule)}** — {a.message}")
@@ -291,6 +309,14 @@ if rest:
             "Net margin": float(r.net_margin),
             "Robust": "yes" if r.robust else "no"} for r in rest]),
             hide_index=True, width="stretch")
+excluded = [r for r in run.results.values() if r.violations]
+if excluded:
+    with st.expander(f"⛔ {len(excluded)} plans excluded by hard constraints"):
+        st.dataframe(pd.DataFrame([{
+            "Plan": r.plan.label, "Violation": " ".join(r.violations),
+            "Fin. cost": float(r.financing_cost),
+            "Reserve met": "yes" if r.reserve_ok else f"no (day {r.first_breach_day})",
+        } for r in excluded]), hide_index=True, width="stretch")
 st.caption("Every number is computed by the deterministic engine; the decision "
            "layer only ranks what the engine verified.")
 
