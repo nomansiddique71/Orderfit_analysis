@@ -115,6 +115,7 @@ with st.sidebar:
             f"{tier_chip('T1')} propose — simulate, rank, draft  \n"
             f"{tier_chip('T2')} act — sandbox only, owner-approved  \n"
             f"{tier_chip('T3')} never — hard-blocked in code")
+    st.caption(f"🤖 AI: {gemini_client.backend_label()}")
     st.caption("Synthetic data only — no live banks, lenders or email.")
 
 # ------------------------------------------------------------------- state
@@ -237,9 +238,9 @@ if st.session_state.get("last_answer"):
                    f"the model never computes numbers")
 elif not st.session_state.get("last_answer"):
     if not gemini_client.gemini_available():
-        st.caption("ℹ️ Gemini is not configured — set GOOGLE_API_KEY in the workspace "
-                   ".env to enable Q&A. The deterministic memo below is complete "
-                   "without it.")
+        st.caption("ℹ️ Gemini is not configured — set GOOGLE_GENAI_USE_VERTEXAI=true "
+                   "(Vertex AI) or GOOGLE_API_KEY to enable Q&A. The deterministic "
+                   "memo below is complete without it.")
     else:
         st.caption("Answers are grounded strictly in the engine's memo JSON — "
                    "if a fact is not in the data, the agent says so.")
@@ -256,9 +257,12 @@ with d1:
         f"(${fmt(case.gross_margin)} gross margin) that cannot be funded on the "
         f"current payment terms.")
 with d2:
-    for a in run.alerts:
-        if a.rule == "reserve_breach":
-            st.error(f"🔔 **Reserve breach** — {a.message}")
+    alert_title = {"reserve_breach": "Reserve breach",
+                   "payment_before_receipt": "Payment before receipt",
+                   "offer_expiry": "Offer expiry", "fragile_plan": "Fragile plan"}
+    for a in sorted(run.alerts, key=lambda a: {"critical": 0, "warning": 1}.get(a.severity, 2)):
+        show = {"critical": st.error, "warning": st.warning}.get(a.severity, st.info)
+        show(f"🔔 **{alert_title.get(a.rule, a.rule)}** — {a.message}")
 
 # ------------------------------------------------------ section: the options
 
@@ -387,6 +391,11 @@ st.markdown(f"""
 # -------------------------------------------------- section: documents
 
 with st.expander("📄 Documents, extraction & injection defence (stage A)"):
+    if run.extraction_mode == "gemini":
+        st.success(f"🤖 **Extracted by {gemini_client.backend_label()}** as typed JSON. "
+                   f"{run.extraction_note}")
+    else:
+        st.info(f"⚙️ **Deterministic regex extraction.** {run.extraction_note}")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Purchase order PO-8841**")
@@ -410,7 +419,7 @@ with st.expander("📄 Documents, extraction & injection defence (stage A)"):
         "Owner question": f.question or "",
     } for f in run.fields]), hide_index=True, width="stretch")
 
-    st.markdown("#### Cash position & obligations (deterministic CSV parse)")
+    st.markdown("#### Cash position & obligations (structured case data, owner-confirmed)")
     st.dataframe(pd.DataFrame([{
         "Day": m.day, "Amount": float(m.amount), "Item": m.label,
         "Counterparty": m.counterparty, "Certain": m.certain,
@@ -421,6 +430,10 @@ with st.expander("📄 Documents, extraction & injection defence (stage A)"):
 
 with st.expander("✍️ Draft counterparty message"):
     st.text_area("draft", run.draft_message, height=170, label_visibility="collapsed")
+    if st.button("✨ Polish draft with Gemini (numbers verified by the engine)"):
+        polished, pmode, pnote = gemini_client.polish_draft(run)
+        st.text_area("polished", polished, height=190, label_visibility="collapsed")
+        (st.success if pmode == "gemini" else st.warning)(f"source: {pmode} · {pnote}")
     if st.button("Generate plain-language explanation (Gemini, optional)"):
         text, mode = gemini_client.explain_memo(run)
         st.markdown(text)

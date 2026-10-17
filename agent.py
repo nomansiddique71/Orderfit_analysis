@@ -1,10 +1,11 @@
 """OrderFit agent orchestration: the five stages A-E, ending in a decision memo.
 
-The LLM (Gemini, optional) is only used for extraction assistance, explanation
-and drafting. Arithmetic, feasibility and ranking are owned by engine.py; this
-module assembles their outputs into the structured memo. When no Gemini key
-is configured, every deterministic part still runs -- the narrative falls
-back to templates.
+Gemini is used for document extraction (stage A), explanation, Q&A and
+drafting. Every extracted field is verified here before it can matter:
+the quoted span must exist in the source document, and key amounts must
+match the owner-confirmed case. Arithmetic, feasibility and ranking are
+owned by engine.py. When Gemini is not configured or fails, stage A falls
+back to deterministic regex extraction and the narrative to templates.
 """
 
 from __future__ import annotations
@@ -81,12 +82,149 @@ def extract_fields(po: str, quote: str) -> tuple[list[ExtractedField], list[Inje
     add("Deposit refundability", "non-refundable once production begins", "Q-3312", quote,
         r"deposit is non-refundable once production begins", 0.9)
 
+    return fields, _regex_injections(po, quote)
+
+
+def _regex_injections(po: str, quote: str) -> list[InjectionFlag]:
     flags = []
     for doc_name, text in (("PO-8841", po), ("Q-3312", quote)):
         m = INJECTION_RE.search(text)
         if m:
             flags.append(InjectionFlag(doc_name, m.group(0)))
-    return fields, flags
+    return flags
+
+
+# ------------------------------------------- stage A with Gemini + verifier
+
+FIELD_NAMES = [
+    "Order value", "Delivery required by", "Customer payment terms",
+    "Early-settlement discount", "Late-delivery penalty", "Supplier deposit",
+    "Supplier second payment", "Shipping & handling", "Deposit refundability",
+]
+LOW_CONFIDENCE = 0.7
+
+# successful Gemini extractions, keyed by document text (one call per variant)
+_EXTRACTION_CACHE: dict[tuple[str, str], tuple] = {}
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().strip("\"'`").lower()
+
+
+def _expected_values(case: Case) -> dict[str, Decimal | int]:
+    """Owner-confirmed figures the extraction is reconciled against."""
+    def cost(label: str):
+        for m in case.order_costs:
+            if m.label.lower().startswith(label.lower()):
+                return -m.amount
+        return None
+
+    exp = {
+        "Order value": case.order_value,
+        "Delivery required by": case.required_delivery_day,
+        "Supplier deposit": cost("Supplier deposit"),
+        "Supplier second payment": cost("Supplier pre-delivery"),
+        "Shipping & handling": cost("Shipping"),
+    }
+    return {k: v for k, v in exp.items() if v is not None}
+
+
+def verify_extraction(data: dict, docs: dict[str, str], case: Case
+                      ) -> tuple[list[ExtractedField], list[InjectionFlag], list[str]]:
+    """Engine-side checks on the model's extraction.
+
+    1. The source must be a known document and the quoted span must appear in
+       it verbatim (catches invented or misattributed text).
+    2. Key amounts/days must match the owner-confirmed case (catches
+       misreadings). A mismatch never changes the numbers the engine uses --
+       it lowers confidence and becomes an owner question.
+    Returns (fields, injection flags, notes about what failed).
+    """
+    from gemini_client import numbers_in
+
+    expected = _expected_values(case)
+    fields: list[ExtractedField] = []
+    notes: list[str] = []
+    seen: set[str] = set()
+    for raw in data.get("fields", []):
+        name = str(raw.get("name", "")).strip()
+        if name not in FIELD_NAMES or name in seen:
+            continue
+        seen.add(name)
+        value = str(raw.get("value", "")).strip()
+        source = str(raw.get("source", "")).strip()
+        span = str(raw.get("span", "")).strip()
+        try:
+            conf = min(max(float(raw.get("confidence", 0)), 0.0), 1.0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        question = (str(raw.get("question") or "").strip()) or None
+
+        doc = docs.get(source)
+        if doc is None or not span or _norm(span) not in _norm(doc):
+            conf = min(conf, 0.3)
+            question = (f"The model's quoted text for '{name}' was not found in "
+                        f"{source or 'the documents'}. Please confirm the value "
+                        f"'{value}' manually.")
+            notes.append(f"{name}: span not found in source")
+        elif name in expected:
+            want = expected[name]
+            want_s = format(want.normalize(), "f") if isinstance(want, Decimal) else str(want)
+            if want_s not in numbers_in(value):
+                conf = min(conf, 0.3)
+                question = (f"Extracted '{value}' for '{name}' does not match the "
+                            f"owner-confirmed figure ({want_s}). The engine keeps the "
+                            f"confirmed figure until you check the document.")
+                notes.append(f"{name}: value does not match confirmed case")
+        if conf < LOW_CONFIDENCE and not question:
+            question = f"Low confidence on '{name}' ({value}). Please confirm."
+        fields.append(ExtractedField(name, value, source, span, conf, question))
+
+    missing = [n for n in FIELD_NAMES if n not in seen]
+    if missing:
+        notes.append("not returned by the model: " + ", ".join(missing))
+
+    flags: list[InjectionFlag] = []
+    for item in data.get("instructions_found", []):
+        source = str(item.get("source", "")).strip()
+        span = str(item.get("span", "")).strip()
+        doc = docs.get(source)
+        if doc is not None and span and _norm(span) in _norm(doc):
+            flags.append(InjectionFlag(source, span))
+    return fields, flags, notes
+
+
+def extract_documents(po: str, quote: str, case: Case
+                      ) -> tuple[list[ExtractedField], list[InjectionFlag], str, str]:
+    """Stage A. Returns (fields, injection flags, mode, note).
+
+    mode is "gemini" (model extraction, verified) or "regex" (fallback).
+    The deterministic regex injection filter always runs as well, so a
+    prompt-injection line is flagged even if the model misses it.
+    """
+    import gemini_client
+
+    regex_flags = _regex_injections(po, quote)
+    if gemini_client.gemini_available():
+        key = (po, quote)
+        if key not in _EXTRACTION_CACHE:
+            try:
+                data = gemini_client.extract_documents(po, quote, FIELD_NAMES)
+                _EXTRACTION_CACHE[key] = verify_extraction(
+                    data, {"PO-8841": po, "Q-3312": quote}, case)
+            except Exception as exc:  # never block the demo on the model
+                fields, flags = extract_fields(po, quote)
+                return fields, flags, "regex", f"Gemini extraction failed ({exc}); used regex fallback."
+        fields, model_flags, notes = _EXTRACTION_CACHE[key]
+        flags = list(model_flags)
+        for f in regex_flags:
+            if not any(g.document == f.document for g in flags):
+                flags.append(f)
+        note = ("All fields verified against the source text and the confirmed case."
+                if not notes else "Verifier notes: " + "; ".join(notes))
+        return fields, flags, "gemini", note
+    fields, flags = extract_fields(po, quote)
+    return fields, flags, "regex", "Gemini not configured; used deterministic regex extraction."
 
 
 # ------------------------------------------------------------- alerts (8.2)
@@ -159,6 +297,8 @@ class AgentRun:
     min_advance: tuple[Decimal, SimulationResult] | None
     draft_message: str
     questions: list[str]
+    extraction_mode: str = "regex"  # "gemini" (verified) or "regex" (fallback)
+    extraction_note: str = ""
 
 
 def run_agent(case: Case, customer_payment_day: int, priority: str,
@@ -169,10 +309,12 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
 
     # Stage A -- extraction
     po, quote = po_text(injected), QUOTE_TEXT
-    fields, injections = extract_fields(po, quote)
+    fields, injections, extraction_mode, extraction_note = extract_documents(po, quote, case)
     questions = [f.question for f in fields if f.question]
     log.append(("A", "Commercial document extraction",
-                f"{len(fields)} typed fields with source spans; "
+                ("Gemini structured extraction, verified by the engine: "
+                 if extraction_mode == "gemini" else "Regex fallback extraction: ")
+                + f"{len(fields)} typed fields with source spans; "
                 f"{len(questions)} low-confidence field(s) raised as owner questions; "
                 f"{len(injections)} injection attempt(s) flagged."))
 
@@ -229,7 +371,8 @@ def run_agent(case: Case, customer_payment_day: int, priority: str,
         results=results, ranked=ranked, winner=winner,
         priority_conflict=priority_conflict, alerts=alerts, sensitivity=sensitivity,
         flip_day=flip_day, min_advance=min_advance, draft_message=draft,
-        questions=questions,
+        questions=questions, extraction_mode=extraction_mode,
+        extraction_note=extraction_note,
     )
 
 
