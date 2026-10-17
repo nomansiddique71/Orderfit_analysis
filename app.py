@@ -301,8 +301,14 @@ show_ids = [p for p in PLAN_ORDER if p in run.results]
 records = []
 for pid in show_ids:
     r = run.results[pid]
-    records += [{"day": d, "balance": float(b), "plan": r.plan.label}
-                for d, b in r.path.items()]
+    seq = 0
+    for d, b in r.path.items():
+        # same-day rule: draw the intra-day low first, then the end-of-day balance
+        low = r.low_path.get(d, b)
+        for bal in ((low, b) if low != b else (b,)):
+            records.append({"day": d, "balance": float(bal), "plan": r.plan.label,
+                            "seq": seq})
+            seq += 1
 df = pd.DataFrame(records)
 labels = [run.results[p].plan.label for p in show_ids]
 colors = [PLAN_COLORS[p] for p in show_ids]
@@ -316,6 +322,7 @@ gap = alt.Chart(asis_rows).mark_area(color=RED, opacity=0.22).encode(
 lines = alt.Chart(df).mark_line(strokeWidth=2).encode(
     x=alt.X("day:Q", title="Day"),
     y=alt.Y("balance:Q", title="Cash balance (USD)", axis=alt.Axis(format="$,.0f")),
+    order="seq:Q",
     color=alt.Color("plan:N", sort=labels, title=None,
                     scale=alt.Scale(domain=labels, range=colors),
                     legend=alt.Legend(orient="top", direction="horizontal")),
@@ -327,11 +334,11 @@ lines = alt.Chart(df).mark_line(strokeWidth=2).encode(
 marks = []
 if asis.first_breach_day is not None:
     marks.append(alt.Chart(pd.DataFrame([{
-        "day": asis.first_breach_day, "balance": float(asis.path[asis.first_breach_day]),
+        "day": asis.first_breach_day, "balance": float(asis.low_path[asis.first_breach_day]),
         "label": f"first breach · day {asis.first_breach_day}"}])).mark_circle(
         size=130, color=RED).encode(x="day:Q", y="balance:Q"))
     marks.append(alt.Chart(pd.DataFrame([{
-        "day": asis.first_breach_day, "balance": float(asis.path[asis.first_breach_day]),
+        "day": asis.first_breach_day, "balance": float(asis.low_path[asis.first_breach_day]),
         "label": f"first breach · day {asis.first_breach_day}"}])).mark_text(
         dy=-12, color=RED, fontSize=11, fontWeight="bold").encode(
         x="day:Q", y="balance:Q", text="label:N"))
@@ -350,7 +357,8 @@ st.altair_chart(chart.configure_axis(
     domainColor=GRID).configure_legend(labelColor=SECONDARY, titleColor=SECONDARY),
     width="stretch")
 st.caption(f"Red shading = the affordability gap: the as-is balance below the "
-           f"reserve. Dashed line = minimum reserve. 🟢 = recommended plan's "
+           f"reserve. Dashed line = minimum reserve. Vertical drops = same-day "
+           f"outflows applied before inflows. 🟢 = recommended plan's "
            f"low point (day {w.min_day}).")
 
 # -------------------------------------------------- section: sensitivity

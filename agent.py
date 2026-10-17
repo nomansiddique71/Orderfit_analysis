@@ -244,7 +244,7 @@ def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult) 
         alerts.append(Alert(
             "reserve_breach", as_is.first_breach_day,
             f"Accepting the order as-is breaches the {case.reserve:,.0f} reserve on day "
-            f"{as_is.first_breach_day} (balance {as_is.path[as_is.first_breach_day]:,.0f}); "
+            f"{as_is.first_breach_day} (intra-day low {as_is.low_path[as_is.first_breach_day]:,.0f}); "
             f"low point {as_is.min_balance:,.0f} on day {as_is.min_day}.",
             "critical"))
     # payment-before-receipt: an outflow lands >=5 days before a later inflow

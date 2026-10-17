@@ -9,7 +9,7 @@ as feasible -- it only consumes SimulationResult objects from here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from itertools import product
 
@@ -71,7 +71,7 @@ class Plan:
 @dataclass
 class SimulationResult:
     plan: Plan
-    path: dict[int, Decimal]  # day -> balance (only event days; piecewise-linear between)
+    path: dict[int, Decimal]  # day -> end-of-day balance (only event days)
     min_balance: Decimal
     min_day: int
     first_breach_day: int | None  # first day balance < reserve
@@ -84,6 +84,9 @@ class SimulationResult:
     stress_fail_day: int | None  # first breach day under stress, if any
     depends_on_customer_consent: bool
     depends_on_supplier_consent: bool
+    # day -> lowest balance within the day (outflows applied before inflows).
+    # Breaches and min_balance are measured on this, not on end-of-day.
+    low_path: dict[int, Decimal] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -141,42 +144,62 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int) -> list[Mo
 
 def balance_path(opening: Decimal, movements: list[Movement]) -> dict[int, Decimal]:
     """Cumulative signed sum per event day, sorted. Deterministic and exact."""
-    by_day: dict[int, Decimal] = {}
+    return daily_balances(opening, movements)[1]
+
+
+def daily_balances(opening: Decimal, movements: list[Movement]
+                   ) -> tuple[dict[int, Decimal], dict[int, Decimal]]:
+    """Return (low_path, end_path) per event day.
+
+    Same-day rule (M-10): on a day with both inflows and outflows, outflows are
+    applied first, so the intra-day low is end-of-previous-day + that day's
+    outflows. This is the conservative reading -- a payment due in the morning
+    cannot be funded by a receipt that might clear in the afternoon -- and it
+    keeps the path deterministic (no dependency on input order).
+    """
+    outs: dict[int, Decimal] = {}
+    ins: dict[int, Decimal] = {}
     for m in movements:
-        by_day[m.day] = by_day.get(m.day, ZERO) + m.amount
-    path: dict[int, Decimal] = {}
+        bucket = outs if m.amount < 0 else ins
+        bucket[m.day] = bucket.get(m.day, ZERO) + m.amount
+    low: dict[int, Decimal] = {}
+    end: dict[int, Decimal] = {}
     running = opening
-    for day in sorted(by_day):
-        running += by_day[day]
-        path[day] = running
-    return path
+    for day in sorted(set(outs) | set(ins)):
+        running += outs.get(day, ZERO)
+        low[day] = running
+        running += ins.get(day, ZERO)
+        end[day] = running
+    return low, end
 
 
-def _run_once(case: Case, plan: Plan, customer_payment_day: int) -> tuple[dict, Decimal]:
-    path = balance_path(case.opening_cash, plan_movements(case, plan, customer_payment_day))
+def _run_once(case: Case, plan: Plan, customer_payment_day: int
+              ) -> tuple[dict, dict, Decimal]:
+    low, end = daily_balances(case.opening_cash,
+                              plan_movements(case, plan, customer_payment_day))
     cost = plan.financing.cost() if plan.financing else ZERO
-    return path, cost
+    return low, end, cost
 
 
 def simulate(case: Case, plan: Plan, customer_payment_day: int,
              stress_delays: list[int] | None = None) -> SimulationResult:
     """Simulate base scenario plus optional stress scenarios (customer pays late).
 
-    Feasible  = balance >= reserve on every day, base scenario.
+    Feasible  = intra-day balance >= reserve on every day, base scenario.
     Robust    = feasible in base AND in every stress scenario.
     """
     if stress_delays is None:
         stress_delays = []
-    path, cost = _run_once(case, plan, customer_payment_day)
+    low, path, cost = _run_once(case, plan, customer_payment_day)
 
-    breach_days = [d for d in sorted(path) if path[d] < case.reserve]
-    min_day = min(path, key=lambda d: path[d])
+    breach_days = [d for d in sorted(low) if low[d] < case.reserve]
+    min_day = min(low, key=lambda d: low[d])  # earliest day on ties
     first_breach = breach_days[0] if breach_days else None
 
     stress_fail = None
     for delay in stress_delays:
-        spath, _ = _run_once(case, plan, customer_payment_day + delay)
-        sbreach = [d for d in sorted(spath) if spath[d] < case.reserve]
+        slow, _, _ = _run_once(case, plan, customer_payment_day + delay)
+        sbreach = [d for d in sorted(slow) if slow[d] < case.reserve]
         if sbreach:
             stress_fail = sbreach[0]
             break
@@ -185,7 +208,7 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
     return SimulationResult(
         plan=plan,
         path=path,
-        min_balance=path[min_day],
+        min_balance=low[min_day],
         min_day=min_day,
         first_breach_day=first_breach,
         breach_days=breach_days,
@@ -197,6 +220,7 @@ def simulate(case: Case, plan: Plan, customer_payment_day: int,
         stress_fail_day=stress_fail,
         depends_on_customer_consent=plan.depends_on_customer_consent,
         depends_on_supplier_consent=plan.depends_on_supplier_consent,
+        low_path=low,
     )
 
 
