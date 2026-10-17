@@ -22,8 +22,10 @@ export interface DocView {
   supplier_payments: { label: string; amount: Fact; day: Fact; paid: boolean }[];
   line_items: { description: string; amount: string; source: string }[];
   bank_details: { source: string; payee: string; bank: string; account: string; verified: boolean }[];
-  flags: Flag[]; profile: Profile | null;
+  flags: Flag[]; profile: Profile | null; profile_source: "sample" | "owner" | "example" | "default";
 }
+export interface Need { key: string; question: string; why: string; widget: string; source: "gemini" | "rules"; required: boolean }
+export interface NeedsView { needs: Need[]; mode: "gemini" | "rules"; note: string; profile_source: string; profile: Profile | null }
 export interface Tolerance {
   kind: "never_pays_safe" | "fails_on_time" | "days"; days: number | null; label: string;
   last_safe_pay_day: number | null; survives: Record<string, boolean>;
@@ -38,7 +40,7 @@ export interface Plan {
   recommended: boolean;
 }
 export interface Analysis {
-  ok: boolean; missing?: string[];
+  ok: boolean; missing?: string[]; needs_business?: boolean;
   case: {
     name: string; currency: string; business: string; opening_cash: number; reserve: number;
     order_value: number; gross_margin: number; delivery_day: number;
@@ -142,11 +144,16 @@ async function handle<T>(r: Response): Promise<T> {
 type LoadCall = { path: string; body: Record<string, unknown> } | { files: File[]; pasted: string };
 let lastLoad: LoadCall | null = null;
 let resolvedFlags: { code: string; note: string }[] = [];
+let lastProfile: Record<string, unknown> | null = null; // business details survive a new case
 const LOAD_PATHS = new Set(["/api/documents/sample", "/api/documents/manual"]);
 
 function remember(path: string, body: Record<string, unknown>) {
-  if (LOAD_PATHS.has(path)) { lastLoad = { path, body }; resolvedFlags = []; }
+  if (LOAD_PATHS.has(path)) {
+    lastLoad = { path, body }; resolvedFlags = [];
+    if (path === "/api/documents/sample") lastProfile = null; // a sample brings its own business
+  }
   else if (path === "/api/flags/resolve") resolvedFlags.push({ code: String(body.code), note: String(body.note) });
+  else if (path === "/api/profile") lastProfile = body;
 }
 
 function jsonPost(path: string, sid: string, body: Record<string, unknown>) {
@@ -162,12 +169,12 @@ function uploadPost(sid: string, files: File[], pasted: string) {
 }
 
 async function replay(sid: string) {
-  if (!lastLoad) return;
-  await handle(await ("path" in lastLoad ? jsonPost(lastLoad.path, sid, lastLoad.body) : uploadPost(sid, lastLoad.files, lastLoad.pasted)));
+  if (lastLoad) await handle(await ("path" in lastLoad ? jsonPost(lastLoad.path, sid, lastLoad.body) : uploadPost(sid, lastLoad.files, lastLoad.pasted)));
+  if (lastProfile) await handle(await jsonPost("/api/profile", sid, lastProfile));
   for (const r of resolvedFlags) await handle(await jsonPost("/api/flags/resolve", sid, r));
 }
 
-export function forgetCase() { lastLoad = null; resolvedFlags = []; }
+export function forgetCase() { lastLoad = null; resolvedFlags = []; lastProfile = null; }
 
 async function withSession<T>(send: (sid: string) => Promise<Response>): Promise<T> {
   return tracked(withSessionInner<T>(send));

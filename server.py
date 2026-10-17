@@ -38,6 +38,7 @@ import case_builder
 import doc_extract
 import engine
 import gemini_client
+import needs
 from docmodel import FACT_LABELS, SIMULATION_FACTS, Fact, Facts, SupplierPayment
 from sandbox import (OVERRIDE_TAG, Approval, MockLenderPortal, MockOutbox, OperationLog,
                      PermissionGate, SimulatedBank, execute_plan)
@@ -76,6 +77,9 @@ class Session:
     mode: str = ""
     note: str = ""
     profile: case_builder.BusinessProfile | None = None
+    # sample: the pack's own business | owner: the owner filled the business form |
+    # example: owner chose the example business | default: nobody gave business facts yet
+    profile_source: str = "default"
     sample_id: str | None = None
     resolved: dict = field(default_factory=dict)  # flag code -> owner note
     last: dict = field(default_factory=dict)  # run, case, pay_day, versions
@@ -141,6 +145,7 @@ def _documents_view(s: Session) -> dict:
                          for b in f.bank_details],
         "flags": [_flag_json(x) for x in stage.integrity],
         "profile": s.profile.to_json() if s.profile else None,
+        "profile_source": s.profile_source,
     }
 
 
@@ -240,9 +245,19 @@ def _default_profile() -> case_builder.BusinessProfile:
     return case_builder.profile_from_json(json.loads((SAMPLES / "clean" / "profile.json").read_text()))
 
 
+def _set_profile(s: Session, sample_profile) -> None:
+    """A sample brings its own business. Otherwise keep business facts the owner
+    already gave in this session; if none, the example business is only a
+    placeholder until the owner fills the business form (analysis waits)."""
+    if sample_profile is not None:
+        s.profile, s.profile_source = sample_profile, "sample"
+    elif s.profile_source not in ("owner", "example"):
+        s.profile, s.profile_source = _default_profile(), "default"
+
+
 def _ingest(s: Session, docs: list, profile, sample_id: str | None) -> dict:
     s.docs, s.sample_id, s.resolved = docs, sample_id, {}
-    s.profile = profile or s.profile or _default_profile()
+    _set_profile(s, profile)
     s.facts, s.mode, s.note = doc_extract.extract_facts(docs)
     s.last, s.approvals, s.active_approval, s.executed = {}, {}, None, None
     s.log.append("extract_fields", "T0", {"documents": [d.filename for d in docs]}, None,
@@ -327,9 +342,127 @@ def manual(req: ManualReq):
             bool(p.get("paid", False))))
     s.docs, s.facts, s.mode, s.sample_id = [], f, "manual", None
     s.note = "Facts entered by the owner (no AI used)."
-    s.profile = s.profile or _default_profile()
+    _set_profile(s, None)
     s.last, s.approvals, s.active_approval, s.executed, s.resolved = {}, {}, None, None, {}
     s.log.append("manual_entry", "T0", {"fields": len(req.facts)}, None, "owner-entered facts")
+    return _documents_view(s)
+
+
+BUSINESS_MISSING = "Your business details (cash today, reserve, regular payments)"
+
+
+class NeedsReq(BaseModel):
+    session_id: str
+    edits: dict = Field(default_factory=dict)
+
+
+@app.post("/api/needs")
+def what_else(req: NeedsReq):
+    """Questions SolvOrder must ask before it can judge this order (Gemini picks and
+    phrases them from a fixed list; the rule checklist is the fallback and floor)."""
+    s = _session(req.session_id)
+    if s.facts is None:
+        raise HTTPException(400, "Load a sample or upload documents first.")
+    edits = {k: str(v)[:200] for k, v in req.edits.items() if k in Facts.SCALAR_FIELDS}
+    rules = needs.rule_needs(s.facts, edits, s.profile_source)
+    ck = ("needs", hashlib.sha256(json.dumps(
+        [{k: f.value for k, f in s.facts.scalars().items()}, edits, s.profile_source,
+         [d.doc_id + d.text[:2000] for d in s.docs]], sort_keys=True).encode()).hexdigest())
+    if ck not in s.ai_cache:
+        mode, note, picked = "rules", "Gemini is not configured: standard checklist.", []
+        if gemini_client.gemini_available():
+            known = {**{FACT_LABELS[k]: (edits.get(k) or f.value) for k, f in s.facts.scalars().items()},
+                     "supplier_payments": [f"{p.label}: {p.amount.value} on {p.day.value}"
+                                           for p in s.facts.supplier_payments],
+                     "business_facts_given_by_owner": s.profile_source in ("owner", "sample")}
+            if s.profile_source in ("owner", "sample"):
+                known["business"] = s.profile.to_json()
+            docs = "\n\n".join(f"=== {d.doc_id} ({d.filename}) ===\n{d.text}" for d in s.docs)
+            try:
+                picked = gemini_client.what_else_needed(known, docs or "(no documents: typed by the owner)",
+                                                        list(needs.NEEDS))
+                mode, note = "gemini", f"Chosen by {gemini_client.backend_label()} for this order."
+            except Exception as exc:  # degrade to the checklist, never block
+                note = f"Gemini could not choose the questions ({exc}); standard checklist used."
+        s.ai_cache[ck] = (needs.merge(rules, picked), mode, note)
+        s.log.append("gemini.what_else_needed", "T1", {"keys": len(picked)}, None, f"source: {mode}")
+    items, mode, note = s.ai_cache[ck]
+    return {"needs": [n.to_json() for n in items], "mode": mode, "note": note,
+            "profile_source": s.profile_source,
+            "profile": s.profile.to_json() if s.profile else None}
+
+
+class Recurring(BaseModel):
+    label: str = Field(max_length=80)
+    amount: float = Field(gt=0)
+    days: str = Field(max_length=120)  # "15, 45" -- one payment per listed day
+
+
+class Receipt(BaseModel):
+    label: str = Field(max_length=80)
+    amount: float = Field(gt=0)
+    day: int = Field(ge=0, le=365)
+
+
+class OfferIn(BaseModel):
+    lender: str = Field(min_length=1, max_length=80)
+    principal: float = Field(gt=0)
+    fee_pct: float = Field(default=0, ge=0, le=100)
+    monthly_rate_pct: float = Field(default=0, ge=0, le=100)
+    origination: float = Field(default=0, ge=0)
+    repay_day: int = Field(ge=1, le=365)
+
+
+class ProfileReq(BaseModel):
+    session_id: str
+    use_example: bool = False  # demo shortcut: keep the example business
+    name: str = Field(default="My business", max_length=80)
+    currency: str = Field(default="USD", max_length=5)
+    opening_cash: float | None = None
+    reserve: float | None = Field(default=None, ge=0)
+    max_financing_cost: float = Field(default=0, ge=0)
+    recurring: list[Recurring] = Field(default_factory=list, max_length=20)
+    receivables: list[Receipt] = Field(default_factory=list, max_length=20)
+    offers: list[OfferIn] = Field(default_factory=list, max_length=6)
+
+
+@app.post("/api/profile")
+def set_profile(req: ProfileReq):
+    """The owner's business facts (answers to the intake questions)."""
+    s = _session(req.session_id)
+    if req.use_example:
+        s.profile, s.profile_source = s.profile or _default_profile(), "example"
+        s.log.append("set_profile", "T1", {"example": True}, None, "owner chose the example business")
+        return _documents_view(s)
+    if req.opening_cash is None or req.reserve is None:
+        raise HTTPException(400, "Cash today and the minimum reserve are required.")
+    obligations = []
+    for r in req.recurring:
+        days = [d.strip() for d in r.days.replace(";", ",").split(",") if d.strip()]
+        if not days or not all(d.isdigit() and 0 <= int(d) <= 365 for d in days):
+            raise HTTPException(400, f"'{r.label}': list the days as numbers 0-365, e.g. 15, 45")
+        kind = "payroll" if any(w in r.label.lower() for w in ("payroll", "salar", "wage")) else "obligation"
+        obligations += [{"day": int(d), "amount": str(-Decimal(str(r.amount))), "label": r.label,
+                         "kind": kind, "counterparty": "Staff" if kind == "payroll" else r.label}
+                        for d in days]
+    obligations += [{"day": r.day, "amount": str(Decimal(str(r.amount))), "label": r.label,
+                     "kind": "receivable", "counterparty": r.label} for r in req.receivables]
+    offers = [{"id": f"OFF-{i}", "lender": o.lender, "principal": str(o.principal),
+               "fee_pct": str(o.fee_pct), "monthly_rate_pct": str(o.monthly_rate_pct),
+               "origination": str(o.origination), "draw_day": 0, "repay_day": o.repay_day,
+               "expires_day": 7, "conditions": "Entered by the owner."}
+              for i, o in enumerate(req.offers, 1)]
+    try:
+        s.profile = case_builder.profile_from_json({
+            "name": req.name.strip() or "My business", "currency": req.currency.strip().upper() or "USD",
+            "opening_cash": str(req.opening_cash), "reserve": str(req.reserve),
+            "max_financing_cost": str(req.max_financing_cost),
+            "obligations": sorted(obligations, key=lambda o: o["day"]), "offers": offers})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    s.profile_source = "owner"
+    s.log.append("set_profile", "T1", {"obligations": len(obligations), "offers": len(offers)},
+                 None, "owner entered business details")
     return _documents_view(s)
 
 
@@ -382,6 +515,9 @@ def analyze(req: AnalyzeReq):
     if req.max_financing_cost is not None:
         profile = replace(profile, max_financing_cost=Decimal(str(round(max(req.max_financing_cost, 0), 2))))
     built = case_builder.build_case(s.facts, profile, req.edits, req.payment_reading)
+    if s.profile_source == "default":  # documents describe the order, not the business
+        return {"ok": False, "needs_business": True,
+                "missing": built.missing + [BUSINESS_MISSING]}
     if built.case is None:
         return {"ok": False, "missing": built.missing}
     case = built.case

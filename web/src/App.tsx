@@ -4,6 +4,7 @@ import { ApiError, forgetCase, get, post, resetSession, type Analysis, type DocV
 import { ActStep } from "./components/ActStep";
 import { FactsStep, type FactState } from "./components/FactsStep";
 import { HowItWorks } from "./components/HowItWorks";
+import { NeedsModal } from "./components/NeedsModal";
 import { OptionsStep } from "./components/OptionsStep";
 import { RiskStep } from "./components/RiskStep";
 import { Sidebar, STEPS } from "./components/Sidebar";
@@ -33,6 +34,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState<string[] | null>(null);
   const [how, setHow] = useState(false);
+  const [needsOpen, setNeedsOpen] = useState(false);
   const main = useRef<HTMLDivElement>(null);
 
   useEffect(() => { get<{ ai: string; gemini: boolean }>("/api/health").then((h) => setAi({ label: h.ai, gemini: h.gemini })).catch(() => setAi(null)); }, []);
@@ -61,7 +63,7 @@ export default function App() {
         stress_delay: controls.stress, reserve: facts.reserve, opening_cash: facts.openingCash,
         max_financing_cost: facts.maxFin, pay_day: controls.payDay, tie_choice: controls.tie,
       });
-      if (!r.ok) { setMissing(r.missing ?? []); setAnalysis(null); return r; }
+      if (!r.ok) { setMissing(r.missing ?? []); setAnalysis(null); if (r.needs_business) setNeedsOpen(true); return r; }
       setMissing(null); setAnalysis(r);
       return r;
     } catch (e) {
@@ -107,8 +109,8 @@ export default function App() {
             These were not found in the documents: <b>{missing.join(", ")}</b>. Add them in the table below (or use the manual form on the first screen). SolvOrder never guesses a number.
           </Callout>}
 
-          {step === 0 && <StartStep aiOn={!!ai?.gemini} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); }} />}
-          {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} analysing={busy} />}
+          {step === 0 && <StartStep aiOn={!!ai?.gemini} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); if (v.profile_source === "default") setNeedsOpen(true); }} />}
+          {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} analysing={busy} onOpenNeeds={() => setNeedsOpen(true)} />}
           {step === 2 && analysis && <RiskStep a={analysis} reading={reading} setReading={setReading} onNext={() => go(3)} updating={busy}
             onConfirm={(k) => setFacts((f) => ({ ...f, confirmed: new Set([...f.confirmed, k]) }))} />}
           {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} updating={busy} />}
@@ -117,6 +119,12 @@ export default function App() {
         </div>
       </main>
       {how && <HowItWorks onClose={() => setHow(false)} />}
+      {needsOpen && view && <NeedsModal edits={facts.edits} onClose={() => setNeedsOpen(false)}
+        onSaved={(v, answers) => {
+          if (v) setView(v);
+          setFacts((f) => ({ ...f, edits: { ...f.edits, ...answers }, ...(v ? { reserve: null, openingCash: null, maxFin: null } : {}) }));
+          setMissing(null); setNeedsOpen(false);
+        }} />}
     </div>
   );
 }

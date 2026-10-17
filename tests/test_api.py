@@ -108,6 +108,10 @@ def test_upload_pdf_and_pasted_text():
     assert r.status_code == 200, r.text
     view = r.json()
     assert [d["kind"] for d in view["documents"]] == ["purchase_order", "supplier_quote"]
+    assert view["profile_source"] == "default"
+    blocked = _analyze(sid)  # documents describe the order, not the business
+    assert not blocked["ok"] and blocked["needs_business"]
+    assert client.post("/api/profile", json={"session_id": sid, "use_example": True}).status_code == 200
     assert _analyze(sid)["ok"]
 
 
@@ -121,6 +125,7 @@ def test_manual_entry_runs_engine_without_ai():
                               {"label": "Pre-delivery", "amount": "5000", "day": 20},
                               {"label": "Shipping", "amount": "1500", "day": 30}]})
     assert r.status_code == 200
+    client.post("/api/profile", json={"session_id": sid, "use_example": True})
     a = _analyze(sid)
     assert a["ok"] and a["verdict"]["winner"] == "adv50_ext0_nofin"
 

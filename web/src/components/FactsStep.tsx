@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, BadgeCheck, Building2, Eye, FileText, Landmark, PhoneCall, ShieldAlert, TriangleAlert } from "lucide-react";
+import { ArrowRight, BadgeCheck, Building2, ClipboardList, Eye, FileText, Landmark, PhoneCall, ShieldAlert, TriangleAlert } from "lucide-react";
 import { post, type DocView, type Fact, type Flag } from "../api";
 import { money } from "../format";
 import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle } from "./ui";
@@ -75,9 +75,14 @@ function Status({ f }: { f: Fact }) {
   return <Pill tone="amber"><TriangleAlert className="h-3 w-3" /> Needs your check · {Math.round(f.confidence * 100)}%</Pill>;
 }
 
-export function FactsStep({ view, setView, state, setState, onNext, analysing }: {
+const PROFILE_SOURCE: Record<string, [string, "blue" | "green" | "amber" | "slate"]> = {
+  sample: ["Sample business", "slate"], owner: ["Your numbers", "green"],
+  example: ["Example numbers", "amber"], default: ["Not given yet", "amber"],
+};
+
+export function FactsStep({ view, setView, state, setState, onNext, analysing, onOpenNeeds }: {
   view: DocView; setView: (v: DocView) => void; state: FactState; setState: (s: FactState) => void;
-  onNext: () => void; analysing: boolean;
+  onNext: () => void; analysing: boolean; onOpenNeeds: () => void;
 }) {
   const [showDocs, setShowDocs] = useState(false);
   const cur = view.profile?.currency ?? "USD";
@@ -102,6 +107,13 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
         {MODE_TEXT[view.mode] ?? view.note}
         {/scanned|could not read/i.test(view.note) && <div className="mt-1 text-xs opacity-80">{view.note}</div>}
       </Callout>
+
+      {view.profile_source === "default" && (
+        <Callout tone="warning" title="SolvOrder still needs your business's numbers"
+          action={<button className="btn-primary" onClick={onOpenNeeds}><ClipboardList className="h-4 w-4" /> Answer SolvOrder's questions</button>}>
+          Your documents describe the order, not your cash, payroll or bills. Gemini has a short list of questions for you.
+        </Callout>
+      )}
 
       {flags.length > 0 && (
         <Card className="p-6">
@@ -209,7 +221,9 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing }:
       {view.profile && (
         <Card className="p-6">
           <SectionTitle icon={<Building2 className="h-5 w-5" />} title={`Your business: ${view.profile.name}`}
-            sub="Cash today, your safety reserve and existing payments. SolvOrder adds the order on top of these." />
+            sub="Cash today, your safety reserve and existing payments. SolvOrder adds the order on top of these."
+            right={<div className="flex shrink-0 items-center gap-2"><Pill tone={PROFILE_SOURCE[view.profile_source][1]}>{PROFILE_SOURCE[view.profile_source][0]}</Pill>
+              <button className="btn-secondary" onClick={onOpenNeeds}><ClipboardList className="h-4 w-4" /> {view.profile_source === "owner" ? "Edit my numbers" : "Ask me what you need"}</button></div>} />
           <div className="grid gap-4 md:grid-cols-3">
             {([["openingCash", "Cash in the bank today", view.profile.opening_cash], ["reserve", "Minimum cash reserve (never go below)", view.profile.reserve],
               ["maxFin", "Most you'd pay for financing", view.profile.max_financing_cost]] as const).map(([k, label, def]) => (
