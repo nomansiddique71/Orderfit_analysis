@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { AlertOctagon, AlertTriangle, CheckCircle2, Info, Loader2 } from "lucide-react";
-import type { Severity } from "../api";
+import { pendingCount, subscribePending, type Severity } from "../api";
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <div className={`card ${className}`}>{children}</div>;
@@ -80,6 +80,95 @@ export function Segmented<T extends string | number>({ value, options, onChange 
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ------------------------------------------------------- loading feedback
+
+/** Number of API requests currently in flight (any screen). */
+export function usePending() {
+  return useSyncExternalStore(subscribePending, pendingCount);
+}
+
+/** Thin animated bar fixed to the top of the window while any request runs. */
+export function TopProgress() {
+  const n = usePending();
+  return (
+    <div aria-hidden={n === 0} className={`pointer-events-none fixed inset-x-0 top-0 z-[60] h-1 overflow-hidden transition-opacity duration-300 ${n ? "opacity-100" : "opacity-0"}`}>
+      <div className="progress-indeterminate h-full w-1/3 rounded-full bg-gradient-to-r from-brand-500 via-teal-300 to-brand-600" />
+    </div>
+  );
+}
+
+/** Button that shows a spinner + text while its action runs, and can't be double-clicked. */
+export function LoadingButton({ loading, loadingText, children, disabled, className = "btn-primary", ...rest }:
+  ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean; loadingText?: string }) {
+  return (
+    <button {...rest} className={className} disabled={disabled || loading} aria-busy={loading}>
+      {loading ? <><Loader2 className="h-4 w-4 animate-spin" />{loadingText ?? "Working…"}</> : children}
+    </button>
+  );
+}
+
+/** Full-screen progress panel for long operations (e.g. Gemini reading documents).
+ *  Appears only if the operation lasts longer than `delay` ms, so quick actions don't flash. */
+export function BusyOverlay({ show, title, steps, hint, delay = 450 }: {
+  show: boolean; title: string; steps: string[]; hint?: string; delay?: number;
+}) {
+  const [visible, setVisible] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!show) { setVisible(false); setElapsed(0); return; }
+    const start = Date.now();
+    const t = setTimeout(() => setVisible(true), delay);
+    const i = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 250);
+    return () => { clearTimeout(t); clearInterval(i); };
+  }, [show, delay]);
+  if (!show || !visible) return null;
+  const stepIndex = Math.min(steps.length - 1, Math.floor(elapsed / 4));
+  return (
+    <div role="status" aria-live="polite" className="fixed inset-0 z-50 grid place-items-center bg-ink-950/50 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl">
+        <div className="flex items-center gap-3">
+          <div className="relative grid h-12 w-12 place-items-center">
+            <span className="absolute inset-0 animate-ping rounded-full bg-brand-100" />
+            <Loader2 className="relative h-8 w-8 animate-spin text-brand-600" />
+          </div>
+          <div>
+            <div className="text-lg font-bold text-slate-900">{title}</div>
+            <div className="text-xs text-slate-500">{elapsed}s elapsed</div>
+          </div>
+        </div>
+        <ol className="mt-5 space-y-2">
+          {steps.map((s, i) => (
+            <li key={s} className={`flex items-center gap-2 text-sm transition ${i < stepIndex ? "text-slate-400" : i === stepIndex ? "font-semibold text-slate-900" : "text-slate-300"}`}>
+              {i < stepIndex ? <CheckCircle2 className="h-4 w-4 text-brand-600" />
+                : i === stepIndex ? <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+                : <span className="h-4 w-4 rounded-full border-2 border-slate-200" />}
+              {s}
+            </li>
+          ))}
+        </ol>
+        <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-slate-100">
+          <div className="progress-indeterminate h-full w-1/3 rounded-full bg-brand-500" />
+        </div>
+        {hint && <p className="mt-3 text-xs text-slate-500">{hint}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Dims content and shows an "Updating…" badge while results recalculate. */
+export function Updating({ active, children }: { active: boolean; children: ReactNode }) {
+  return (
+    <div className="relative">
+      {active && (
+        <div className="sticky top-24 z-20 flex justify-center">
+          <span className="chip absolute -top-2 bg-ink-900 px-3 py-1 text-white shadow-lg"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Updating results…</span>
+        </div>
+      )}
+      <div className={`transition-opacity duration-200 ${active ? "pointer-events-none opacity-50" : "opacity-100"}`}>{children}</div>
     </div>
   );
 }

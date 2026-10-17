@@ -27,3 +27,7 @@ body { @apply bg-slate-50 text-slate-800 antialiased; }
 @utility chip { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
 .scroll-thin::-webkit-scrollbar { width: 6px; }
 .scroll-thin::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 9px; }
+
+@keyframes progress-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+.progress-indeterminate { animation: progress-slide 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .progress-indeterminate { animation-duration: 3s; } }

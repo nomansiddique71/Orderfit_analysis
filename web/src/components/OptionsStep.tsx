@@ -3,7 +3,7 @@ import { ArrowRight, Banknote, Bot, CheckCircle2, FlaskConical, Grid3x3, HandCoi
 import { post, type Analysis, type Plan, type ScenarioResult } from "../api";
 import { money, planTitle } from "../format";
 import { CashChart } from "./CashChart";
-import { Callout, Card, Pill, SectionTitle, Segmented, Spinner } from "./ui";
+import { Callout, Card, LoadingButton, Pill, SectionTitle, Segmented, Spinner, Updating } from "./ui";
 
 export const PRIORITIES = [
   { value: "maximize_margin", label: "Highest profit", hint: "Most net profit among safe plans" },
@@ -33,8 +33,8 @@ function OptionCard({ p, a, best }: { p: Plan; a: Analysis; best: boolean }) {
   );
 }
 
-export function OptionsStep({ a, controls, setControls, onNext }: {
-  a: Analysis;
+export function OptionsStep({ a, controls, setControls, onNext, updating }: {
+  a: Analysis; updating: boolean;
   controls: { priority: string; stress: number; payDay: number | null; tie: string | null };
   setControls: (c: Partial<{ priority: string; stress: number; payDay: number | null; tie: string | null }>) => void;
   onNext: () => void;
@@ -64,6 +64,8 @@ export function OptionsStep({ a, controls, setControls, onNext }: {
         </div>
       </Card>
 
+      <Updating active={updating}>
+      <div className="space-y-6">
       {a.verdict.near_tie && (
         <Callout tone="warning" title="Two plans are almost equal: your call">
           <div className="mt-2 grid gap-3 md:grid-cols-2">
@@ -74,7 +76,8 @@ export function OptionsStep({ a, controls, setControls, onNext }: {
                 <div key={t.id} className={`rounded-xl border bg-white p-3 ${chosen ? "border-brand-500" : "border-amber-200"}`}>
                   <div className="font-semibold text-slate-900">{planTitle(p, cur)}</div>
                   <div className="text-xs text-slate-600">Better on: {t.strengths.join("; ") || "nothing"}</div>
-                  <button className={chosen ? "btn-primary mt-2" : "btn-secondary mt-2"} onClick={() => setControls({ tie: t.id })}>{chosen ? "Chosen" : "Prefer this"}</button>
+                  <LoadingButton className={chosen ? "btn-primary mt-2" : "btn-secondary mt-2"} loading={updating && controls.tie === t.id && !chosen}
+                    loadingText="Applying…" onClick={() => setControls({ tie: t.id })}>{chosen ? "Chosen" : "Prefer this"}</LoadingButton>
                 </div>
               );
             })}
@@ -141,6 +144,8 @@ export function OptionsStep({ a, controls, setControls, onNext }: {
       </div>
 
       <Scenarios a={a} />
+      </div>
+      </Updating>
       <AskAgent a={a} />
 
       <div className="flex justify-end">
@@ -156,9 +161,14 @@ function Scenarios({ a }: { a: Analysis }) {
   const [p, setP] = useState({ partial_pct: 70, price_pct: 10, supplier_delay: 14 });
   const [res, setRes] = useState<ScenarioResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   useEffect(() => {
+    setLoading(true);
     const t = setTimeout(() => {
-      post<ScenarioResult>("/api/scenarios", { plan_id: planId, ...p }).then(setRes).catch((e) => setErr((e as Error).message));
+      post<ScenarioResult>("/api/scenarios", { plan_id: planId, ...p })
+        .then((r) => { setRes(r); setErr(null); })
+        .catch((e) => setErr((e as Error).message))
+        .finally(() => setLoading(false));
     }, 200);
     return () => clearTimeout(t);
   }, [planId, p, a]);
@@ -176,6 +186,7 @@ function Scenarios({ a }: { a: Analysis }) {
       </div>
       {err && <Callout tone="warning">{err}</Callout>}
       {!res ? <div className="mt-4"><Spinner text="Running scenarios…" /></div> : (
+        <Updating active={loading}>
         <div className="mt-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-slate-500"><tr><th className="py-2">Scenario</th><th>Lowest cash</th><th>Reserve</th><th className="text-right">Order cash result</th></tr></thead>
@@ -198,6 +209,7 @@ function Scenarios({ a }: { a: Analysis }) {
             )}
           </div>
         </div>
+        </Updating>
       )}
       {plan && <div className="mt-4"><CashChart plans={[plan]} reserve={a.case.reserve} opening={a.case.opening_cash} currency={cur} height={220} /></div>}
     </Card>
@@ -206,30 +218,31 @@ function Scenarios({ a }: { a: Analysis }) {
 
 function AskAgent({ a }: { a: Analysis }) {
   const [q, setQ] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"ask" | "explain" | null>(null);
   const [answers, setAnswers] = useState<{ q: string; text: string; source: string }[]>([]);
   async function ask(question: string, explain = false) {
-    setBusy(true);
+    if (explain === false && !question.trim()) return;
+    setBusy(explain ? "explain" : "ask");
     try {
       const r = explain ? await post<{ text: string; source: string }>("/api/ai/explain")
         : await post<{ text: string; source: string }>("/api/ai/ask", { question });
       setAnswers([{ q: explain ? "Explain this decision in plain language" : question, ...r }, ...answers]);
       setQ("");
     } catch (e) { setAnswers([{ q: question, text: (e as Error).message, source: "error" }, ...answers]); }
-    finally { setBusy(false); }
+    finally { setBusy(null); }
   }
   const suggestions = ["Why is this plan recommended?", "What happens if the customer pays 30 days late?", "How much does financing cost me?"];
   return (
     <Card className="p-6">
       <SectionTitle icon={<MessageSquare className="h-5 w-5" />} title="Ask SolvOrder"
         sub={a.ai.gemini ? "Answered by Google Gemini, using only the engine's verified numbers." : "Gemini is not configured. Answers fall back to a template."}
-        right={<button className="btn-secondary" disabled={busy} onClick={() => ask("", true)}><Bot className="h-4 w-4" /> Explain the decision</button>} />
+        right={<LoadingButton className="btn-secondary" loading={busy === "explain"} loadingText="Explaining…" disabled={!!busy} onClick={() => ask("", true)}><Bot className="h-4 w-4" /> Explain the decision</LoadingButton>} />
       <div className="flex gap-2">
-        <input className="input" value={q} maxLength={500} placeholder="Ask anything about this decision…" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && q.trim() && ask(q)} />
-        <button className="btn-primary" disabled={busy || !q.trim()} onClick={() => ask(q)}><Send className="h-4 w-4" /></button>
+        <input className="input" value={q} maxLength={500} disabled={!!busy} placeholder="Ask anything about this decision…" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !busy && q.trim() && ask(q)} />
+        <LoadingButton className="btn-primary shrink-0" loading={busy === "ask"} loadingText="Asking…" disabled={!!busy || !q.trim()} onClick={() => ask(q)}><Send className="h-4 w-4" /> Ask</LoadingButton>
       </div>
-      <div className="mt-2 flex flex-wrap gap-2">{suggestions.map((s) => <button key={s} className="chip bg-slate-100 text-slate-600 hover:bg-slate-200" onClick={() => ask(s)}>{s}</button>)}</div>
-      {busy && <div className="mt-3"><Spinner text="Thinking…" /></div>}
+      <div className="mt-2 flex flex-wrap gap-2">{suggestions.map((s) => <button key={s} disabled={!!busy} className="chip bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50" onClick={() => ask(s)}>{s}</button>)}</div>
+      {busy && <div className="mt-3 rounded-xl bg-slate-50 p-4"><Spinner text={busy === "explain" ? "Gemini is writing a plain-language explanation…" : "Gemini is answering from the engine's verified numbers…"} /></div>}
       <div className="mt-4 space-y-3">
         {answers.map((x, i) => (
           <div key={i} className="rounded-xl bg-slate-50 p-4">

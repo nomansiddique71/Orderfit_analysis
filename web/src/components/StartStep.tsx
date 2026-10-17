@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, FileText, FileUp, Keyboard, Plus, ShieldAlert, Sparkles, Trash2, Upload } from "lucide-react";
 import { get, post, upload, type DocView, type Pack } from "../api";
-import { Callout, Card, SectionTitle, Spinner } from "./ui";
+import { BusyOverlay, Callout, Card, LoadingButton, SectionTitle } from "./ui";
 
 const BADGE: Record<string, string> = {
   Risk: "bg-sky-100 text-sky-800", Fraud: "bg-rose-100 text-rose-800",
@@ -26,8 +26,13 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
     try { onLoaded(await fn()); } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
   }
 
-  const reading = aiOn ? "Gemini is reading the documents. Every quote it returns is checked against the source text…"
-    : "Reading the documents with the built-in parser…";
+  const steps = busy === "manual"
+    ? ["Checking the facts you entered", "Preparing them for review"]
+    : aiOn
+      ? ["Opening the documents", "Gemini is reading each document", "Checking every quoted value against the source text",
+         "Running fraud and consistency checks", "Preparing the facts for your review"]
+      : ["Opening the documents", "Reading them with the built-in parser", "Running fraud and consistency checks",
+         "Preparing the facts for your review"];
 
   return (
     <div className="space-y-6">
@@ -55,7 +60,8 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
         </div>
       </div>
 
-      {busy && <Card className="p-5"><Spinner text={reading} /></Card>}
+      <BusyOverlay show={!!busy} title={busy === "manual" ? "Preparing your facts" : aiOn ? "Gemini is reading your documents" : "Reading your documents"}
+        steps={steps} hint={aiOn && busy !== "manual" ? "Google Gemini usually needs 20 to 40 seconds for a full set of documents. You only wait once: the result is cached." : undefined} />
       {error && <Callout tone="critical" title="Could not read the documents">{error}</Callout>}
 
       <section id="samples">
@@ -77,10 +83,10 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
                     className="chip bg-slate-100 text-slate-600 hover:bg-slate-200"><Download className="h-3 w-3" />{f.replace(".pdf", "")}</a>
                 ))}
               </div>
-              <button disabled={!!busy} className="btn-primary mt-4"
+              <LoadingButton loading={busy === p.id} loadingText="Reading…" disabled={!!busy} className="btn-primary mt-4"
                 onClick={() => run(p.id, () => post<DocView>("/api/documents/sample", { pack: p.id }))}>
                 Use this case
-              </button>
+              </LoadingButton>
             </Card>
           ))}
         </div>
@@ -115,10 +121,11 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
             <textarea value={pasted} onChange={(e) => setPasted(e.target.value)} rows={4} className="input font-mono text-xs"
               placeholder="From: supplier@example.com&#10;Subject: Payment details…" />
           </div>
-          <button disabled={!!busy || (!files.length && !pasted.trim())} className="btn-primary mt-4 w-full"
+          <LoadingButton loading={busy === "upload"} loadingText={aiOn ? "Gemini is reading…" : "Reading…"}
+            disabled={!!busy || (!files.length && !pasted.trim())} className="btn-primary mt-4 w-full"
             onClick={() => run("upload", () => upload(files, pasted))}>
             <Sparkles className="h-4 w-4" /> {aiOn ? "Read documents with Gemini" : "Read documents"}
-          </button>
+          </LoadingButton>
           <p className="mt-2 text-xs text-slate-500">Demo: use synthetic documents only. Files stay in this session's memory and are never stored.</p>
         </Card>
 
@@ -128,7 +135,7 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
           {!manual ? (
             <button className="btn-secondary w-full" onClick={() => setManual(true)}><Plus className="h-4 w-4" /> Open the manual form</button>
           ) : (
-            <ManualForm busy={!!busy} onSubmit={(facts, pays) => run("manual", () => post<DocView>("/api/documents/manual", { facts, supplier_payments: pays }))} />
+            <ManualForm busy={!!busy} loading={busy === "manual"} onSubmit={(facts, pays) => run("manual", () => post<DocView>("/api/documents/manual", { facts, supplier_payments: pays }))} />
           )}
         </Card>
       </section>
@@ -136,7 +143,7 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
   );
 }
 
-function ManualForm({ busy, onSubmit }: { busy: boolean; onSubmit: (f: Record<string, string>, p: { label: string; amount: string; day: number }[]) => void }) {
+function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boolean; onSubmit: (f: Record<string, string>, p: { label: string; amount: string; day: number }[]) => void }) {
   const [f, setF] = useState<Record<string, string>>({
     customer_name: "", order_ref: "", order_value: "", delivery_day: "30", payment_terms_days: "30",
     payment_terms_basis: "after_delivery", supplier_name: "", late_penalty_pct_per_week: "",
@@ -173,7 +180,7 @@ function ManualForm({ busy, onSubmit }: { busy: boolean; onSubmit: (f: Record<st
         ))}
         <button className="text-sm font-semibold text-brand-700" onClick={() => setPays([...pays, { label: "Payment", amount: "", day: 0 }])}>+ Add payment</button>
       </div>
-      <button disabled={busy} className="btn-primary w-full" onClick={() => onSubmit(f, pays)}>Use these facts</button>
+      <LoadingButton loading={loading} loadingText="Checking…" disabled={busy} className="btn-primary w-full" onClick={() => onSubmit(f, pays)}>Use these facts</LoadingButton>
       <p className="text-xs text-slate-500">Your cash position, reserve and lenders come from the business profile, which you can edit on the next screen.</p>
     </div>
   );

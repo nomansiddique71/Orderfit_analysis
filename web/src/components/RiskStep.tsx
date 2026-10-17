@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { ArrowRight, Bell, CalendarClock, CircleAlert, ListOrdered, OctagonX, Scale, ShieldAlert } from "lucide-react";
 import type { Analysis } from "../api";
 import { money } from "../format";
 import { CashChart } from "./CashChart";
-import { Callout, Card, Pill, SectionTitle, Segmented, Stat } from "./ui";
+import { Callout, Card, LoadingButton, Pill, SectionTitle, Segmented, Stat, Updating } from "./ui";
 
 const LEVEL = { LOW: ["green", "Low uncertainty"], MEDIUM: ["amber", "Medium uncertainty"], HIGH: ["red", "High uncertainty"] } as const;
 const ALERT_TITLE: Record<string, string> = {
@@ -11,8 +12,9 @@ const ALERT_TITLE: Record<string, string> = {
   ineligible_offer: "Ineligible offer", provisional: "Provisional result",
 };
 
-export function Verdict({ a, onConfirm, compact = false }: { a: Analysis; onConfirm: (key: string) => void; compact?: boolean }) {
+export function Verdict({ a, onConfirm, compact = false, updating = false }: { a: Analysis; onConfirm: (key: string) => void; compact?: boolean; updating?: boolean }) {
   const v = a.verdict;
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [tone, label] = LEVEL[v.level];
   const safe = a.plans.find((p) => p.id === v.winner);
   return (
@@ -43,7 +45,8 @@ export function Verdict({ a, onConfirm, compact = false }: { a: Analysis; onConf
           {v.provisional_fields.map((f) => (
             <div key={f.key} className="mt-2 flex flex-col gap-2 rounded-lg bg-white/60 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div><b>{f.name}:</b> {f.value}<div className="text-xs">{f.question}</div></div>
-              <button className="btn-secondary shrink-0" onClick={() => onConfirm(f.key)}>Confirm</button>
+              <LoadingButton className="btn-secondary shrink-0" loading={updating && confirming === f.key} loadingText="Confirming…"
+                disabled={updating} onClick={() => { setConfirming(f.key); onConfirm(f.key); }}>Confirm</LoadingButton>
             </div>
           ))}
         </Callout>
@@ -58,8 +61,9 @@ export function Verdict({ a, onConfirm, compact = false }: { a: Analysis; onConf
   );
 }
 
-export function RiskStep({ a, onConfirm, reading, setReading, onNext }: {
+export function RiskStep({ a, onConfirm, reading, setReading, onNext, updating }: {
   a: Analysis; onConfirm: (key: string) => void; reading: string | null; setReading: (r: string) => void; onNext: () => void;
+  updating: boolean;
 }) {
   const cur = a.case.currency;
   const asis = a.plans.find((p) => p.id === "accept-as-is")!;
@@ -70,8 +74,9 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext }: {
   const alerts = [...a.alerts].sort((x, y) => ({ critical: 0, warning: 1, info: 2 }[x.severity] - { critical: 0, warning: 1, info: 2 }[y.severity]));
 
   return (
+    <Updating active={updating}>
     <div className="space-y-6">
-      <Verdict a={a} onConfirm={onConfirm} />
+      <Verdict a={a} onConfirm={onConfirm} updating={updating} />
 
       {readings.length > 0 && (
         <Card className="p-5">
@@ -139,5 +144,6 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext }: {
         <button className="btn-primary px-6 py-3 text-base" onClick={onNext}>Compare options <ArrowRight className="h-5 w-5" /></button>
       </div>
     </div>
+    </Updating>
   );
 }

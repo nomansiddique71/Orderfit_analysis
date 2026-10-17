@@ -87,6 +87,16 @@ export class ApiError extends Error {
 
 let sessionId: string | null = sessionStorage.getItem("solvorder.sid");
 
+// ---- in-flight request tracking (drives the global progress bar) ----
+let inflight = 0;
+const listeners = new Set<() => void>();
+export function subscribePending(cb: () => void) { listeners.add(cb); return () => { listeners.delete(cb); }; }
+export function pendingCount() { return inflight; }
+async function tracked<T>(p: Promise<T>): Promise<T> {
+  inflight += 1; listeners.forEach((l) => l());
+  try { return await p; } finally { inflight -= 1; listeners.forEach((l) => l()); }
+}
+
 async function newSession(): Promise<string> {
   const r = await fetch("/api/session", { method: "POST" });
   const j = await r.json();
@@ -120,6 +130,10 @@ async function handle<T>(r: Response): Promise<T> {
 // sessions: start a fresh one and retry once. Steps that need earlier state
 // (analyse, approve) then report what is missing instead of failing silently.
 async function withSession<T>(send: (sid: string) => Promise<Response>): Promise<T> {
+  return tracked(withSessionInner<T>(send));
+}
+
+async function withSessionInner<T>(send: (sid: string) => Promise<Response>): Promise<T> {
   try {
     return await handle<T>(await send(await session()));
   } catch (e) {
@@ -138,7 +152,7 @@ export async function post<T>(path: string, body: Record<string, unknown> = {}):
 }
 
 export async function get<T>(path: string): Promise<T> {
-  return handle<T>(await fetch(path));
+  return tracked(fetch(path).then((r) => handle<T>(r)));
 }
 
 export async function upload(files: File[], pasted: string): Promise<DocView> {

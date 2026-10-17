@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ArrowRight, BadgeCheck, Building2, Eye, FileText, Landmark, PhoneCall, ShieldAlert, TriangleAlert } from "lucide-react";
 import { post, type DocView, type Fact, type Flag } from "../api";
 import { money } from "../format";
-import { Callout, Card, Pill, SectionTitle } from "./ui";
+import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle } from "./ui";
 
 export interface FactState {
   edits: Record<string, string>;
@@ -27,6 +27,7 @@ export function payKey(i: number, label: string, amount: string, day: string) {
 export function FlagCard({ flag, onResolve }: { flag: Flag; onResolve?: (code: string, note: string) => Promise<void> }) {
   const [note, setNote] = useState("");
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const tone = flag.resolved ? "success" : flag.severity;
   return (
     <Callout tone={tone} title={
@@ -41,8 +42,8 @@ export function FlagCard({ flag, onResolve }: { flag: Flag; onResolve?: (code: s
           <div className="flex flex-col gap-2 sm:flex-row">
             <input className="input" value={note} onChange={(e) => setNote(e.target.value)}
               placeholder="e.g. Called Brightwave on our saved number; they confirmed no change" />
-            <button className="btn-danger shrink-0" disabled={note.trim().length < 5}
-              onClick={() => onResolve(flag.code, note)}>Record check</button>
+            <LoadingButton className="btn-danger shrink-0" loading={saving} loadingText="Recording…" disabled={note.trim().length < 5}
+              onClick={async () => { setSaving(true); try { await onResolve(flag.code, note); } finally { setSaving(false); } }}>Record check</LoadingButton>
           </div>
         ) : (
           <button className="btn-secondary" onClick={() => setOpen(true)}><PhoneCall className="h-4 w-4" /> I verified this with the supplier</button>
@@ -69,8 +70,9 @@ function Status({ f }: { f: Fact }) {
   return <Pill tone="amber"><TriangleAlert className="h-3 w-3" /> Needs your check · {Math.round(f.confidence * 100)}%</Pill>;
 }
 
-export function FactsStep({ view, setView, state, setState, onNext }: {
-  view: DocView; setView: (v: DocView) => void; state: FactState; setState: (s: FactState) => void; onNext: () => void;
+export function FactsStep({ view, setView, state, setState, onNext, analysing }: {
+  view: DocView; setView: (v: DocView) => void; state: FactState; setState: (s: FactState) => void;
+  onNext: () => void; analysing: boolean;
 }) {
   const [showDocs, setShowDocs] = useState(false);
   const cur = view.profile?.currency ?? "USD";
@@ -89,6 +91,8 @@ export function FactsStep({ view, setView, state, setState, onNext }: {
 
   return (
     <div className="space-y-6">
+      <BusyOverlay show={analysing} title="Analysing your cash"
+        steps={["Rebuilding your cash day by day", "Simulating every option", "Stress-testing late payment", "Ranking the safe plans"]} />
       <Callout tone={view.mode.startsWith("gemini") ? "success" : "info"} title={view.mode.startsWith("gemini") ? "Documents read by Gemini" : "Documents read without AI"}>
         {MODE_TEXT[view.mode] ?? view.note}
         {/scanned|could not read/i.test(view.note) && <div className="mt-1 text-xs opacity-80">{view.note}</div>}
@@ -236,7 +240,7 @@ export function FactsStep({ view, setView, state, setState, onNext }: {
       )}
 
       <div className="flex justify-end">
-        <button className="btn-primary px-6 py-3 text-base" onClick={onNext}>Analyse my cash <ArrowRight className="h-5 w-5" /></button>
+        <LoadingButton className="btn-primary px-6 py-3 text-base" loading={analysing} loadingText="Analysing your cash…" onClick={onNext}>Analyse my cash <ArrowRight className="h-5 w-5" /></LoadingButton>
       </div>
     </div>
   );

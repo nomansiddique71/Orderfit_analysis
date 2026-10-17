@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Ban, CheckCircle2, Download, FileSignature, Landmark, Mail, Play, ScrollText, ShieldCheck, Sparkles, XCircle } from "lucide-react";
 import { get, logUrl, post, type Analysis, type Approval, type Execution, type LogEntry } from "../api";
 import { money, planTitle } from "../format";
-import { Callout, Card, Pill, SectionTitle, Spinner } from "./ui";
+import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle } from "./ui";
 
 const TIER: Record<string, string> = { T0: "bg-slate-200 text-slate-700", T1: "bg-sky-100 text-sky-800", T2: "bg-emerald-100 text-emerald-800", T3: "bg-rose-100 text-rose-800" };
 
@@ -17,11 +17,17 @@ export function ActStep({ a, refresh }: { a: Analysis; refresh: () => Promise<vo
   const [planId, setPlanId] = useState(a.verdict.winner);
   const [ovr, setOvr] = useState({ open: false, plan: "", reason: "", ack: false });
   const [t3, setT3] = useState<string | null>(null);
+  const [t3Busy, setT3Busy] = useState<string | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
 
   const feasible = a.plans.filter((p) => p.feasible && p.id !== "decline");
   const overridable = a.plans.filter((p) => !p.reserve_ok && p.violations.length === 0 && p.id !== "decline");
   const ovrPlan = a.plans.find((p) => p.id === (ovr.plan || overridable[0]?.id));
-  const loadLog = async () => setLog((await get<{ entries: LogEntry[] }>(`/api/log?session_id=${encodeURIComponent(sessionStorage.getItem("solvorder.sid") ?? "")}`)).entries);
+  const loadLog = async () => {
+    setLogLoading(true);
+    try { setLog((await get<{ entries: LogEntry[] }>(`/api/log?session_id=${encodeURIComponent(sessionStorage.getItem("solvorder.sid") ?? "")}`)).entries); }
+    finally { setLogLoading(false); }
+  };
   useEffect(() => { loadLog().catch(() => undefined); }, [approval, exec, t3]);
 
   async function act<T>(label: string, fn: () => Promise<T>, then: (r: T) => void) {
@@ -32,6 +38,8 @@ export function ActStep({ a, refresh }: { a: Analysis; refresh: () => Promise<vo
 
   return (
     <div className="space-y-6">
+      <BusyOverlay show={busy === "execute"} title="Executing the approved plan"
+        steps={["Checking your approval and the fraud gate", "Sending the message to the mock outbox", "Booking payments in the simulated bank", "Comparing the ledger with the engine"]} />
       {a.verdict.provisional && <Callout tone="warning" title="Confirm the provisional facts first">Approval is locked while a value that changes the result is unconfirmed. Use the Confirm buttons on the risk screen.</Callout>}
       {blocked && <Callout tone="critical" title="A fraud check is still open">{a.verdict.execution_blocks.join("; ")}. You can approve, but every payment step will be refused until you record the check on the facts screen.</Callout>}
 
@@ -40,10 +48,10 @@ export function ActStep({ a, refresh }: { a: Analysis; refresh: () => Promise<vo
           <SectionTitle icon={<Mail className="h-5 w-5" />} title="Message to send" sub="Drafted from the engine's numbers. Gemini may reword it, never change a figure." />
           <pre className="whitespace-pre-wrap rounded-xl bg-slate-50 p-4 font-sans text-sm text-slate-800">{draft?.source === "gemini" ? draft.text : a.draft}</pre>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <button className="btn-secondary" disabled={!!busy} onClick={() => act("polish", () => post<{ text: string; source: string; note: string }>("/api/ai/polish"), setDraft)}>
+            <LoadingButton className="btn-secondary" loading={busy === "polish"} loadingText="Gemini is polishing…" disabled={!!busy}
+              onClick={() => act("polish", () => post<{ text: string; source: string; note: string }>("/api/ai/polish"), setDraft)}>
               <Sparkles className="h-4 w-4" /> Polish with Gemini
-            </button>
-            {busy === "polish" && <Spinner text="Polishing…" />}
+            </LoadingButton>
             {draft && <span className={`text-xs ${draft.source === "gemini" ? "text-emerald-700" : "text-amber-700"}`}>{draft.note}</span>}
           </div>
         </Card>
@@ -54,10 +62,11 @@ export function ActStep({ a, refresh }: { a: Analysis; refresh: () => Promise<vo
           <select className="input mt-1" value={planId} onChange={(e) => setPlanId(e.target.value)}>
             {feasible.map((p) => <option key={p.id} value={p.id}>{p.recommended ? "★ " : ""}{planTitle(p, cur)}</option>)}
           </select>
-          <button className="btn-primary mt-3 w-full" disabled={!!busy || a.verdict.provisional || !feasible.length}
+          <LoadingButton className="btn-primary mt-3 w-full" loading={busy === "approve"} loadingText="Recording your approval…"
+            disabled={!!busy || a.verdict.provisional || !feasible.length}
             onClick={() => act("approve", () => post<{ approval: Approval }>("/api/approve", { plan_id: planId }), (r) => { setApproval(r.approval); setExec(null); })}>
             <CheckCircle2 className="h-4 w-4" /> Approve this plan
-          </button>
+          </LoadingButton>
 
           <div className="mt-4 border-t border-slate-100 pt-4">
             {!ovr.open ? (
@@ -72,10 +81,11 @@ export function ActStep({ a, refresh }: { a: Analysis; refresh: () => Promise<vo
                 <input className="input" placeholder="Reason (recorded in the log)" value={ovr.reason} maxLength={300} onChange={(e) => setOvr({ ...ovr, reason: e.target.value })} />
                 {ovrPlan && <label className="flex items-start gap-2 text-rose-900"><input type="checkbox" className="mt-1 accent-rose-600" checked={ovr.ack} onChange={(e) => setOvr({ ...ovr, ack: e.target.checked })} />
                   I understand cash falls to {money(ovrPlan.min_balance, cur)} on day {ovrPlan.min_day}, below my {money(a.case.reserve, cur)} reserve.</label>}
-                <button className="btn-danger w-full" disabled={!ovr.ack || ovr.reason.trim().length < 5 || !!busy}
+                <LoadingButton className="btn-danger w-full" loading={busy === "override"} loadingText="Recording override…"
+                  disabled={!ovr.ack || ovr.reason.trim().length < 5 || !!busy}
                   onClick={() => act("override", () => post<{ approval: Approval }>("/api/approve", { plan_id: ovr.plan || overridable[0].id, override: true, reason: ovr.reason }), (r) => { setApproval(r.approval); setExec(null); })}>
                   Approve with reserve override
-                </button>
+                </LoadingButton>
               </div>
             )}
           </div>
@@ -85,10 +95,10 @@ export function ActStep({ a, refresh }: { a: Analysis; refresh: () => Promise<vo
               <div className="text-sm font-semibold">Approved <code className="rounded bg-white/70 px-1">{approval.id}</code></div>
               <div className="text-sm">{approval.label}</div>
               <div className="text-xs opacity-70">plan version {approval.version}{approval.reason && ` · reason: ${approval.reason}`}</div>
-              <button className="btn-primary mt-3 w-full" disabled={!!busy}
+              <LoadingButton className="btn-primary mt-3 w-full" loading={busy === "execute"} loadingText="Executing in the sandbox…" disabled={!!busy}
                 onClick={() => act("execute", () => post<Execution>("/api/execute"), async (r) => { setExec(r); await refresh(); })}>
                 <Play className="h-4 w-4" /> Execute in the sandbox
-              </button>
+              </LoadingButton>
             </div>
           )}
           {err && <div className="mt-3"><Callout tone="critical">{err}</Callout></div>}
@@ -118,13 +128,16 @@ export function ActStep({ a, refresh }: { a: Analysis; refresh: () => Promise<vo
           <SectionTitle icon={<ShieldCheck className="h-5 w-5" />} title="Try to make it misbehave" sub="These T3 actions have no code path. Every attempt is blocked and logged." />
           <div className="grid gap-2">
             {[["real_email", "Send a real email"], ["live_transfer", "Make a live bank transfer"], ["invent_terms", "Invent better loan terms"], ["edit_document", "Edit a source document"]].map(([k, l]) => (
-              <button key={k} className="btn-secondary justify-start" onClick={() => post<{ reason: string }>("/api/t3", { action: k }).then((r) => setT3(r.reason))}><Ban className="h-4 w-4 text-rose-600" />{l}</button>
+              <LoadingButton key={k} className="btn-secondary justify-start" loading={t3Busy === k} loadingText="Trying…" disabled={!!t3Busy}
+                onClick={() => { setT3Busy(k); post<{ reason: string }>("/api/t3", { action: k }).then((r) => setT3(r.reason)).finally(() => setT3Busy(null)); }}>
+                <Ban className="h-4 w-4 text-rose-600" />{l}
+              </LoadingButton>
             ))}
           </div>
           {t3 && <div className="mt-3"><Callout tone="critical" title="Blocked">{t3}</Callout></div>}
         </Card>
         <Card className="p-6">
-          <SectionTitle icon={<ScrollText className="h-5 w-5" />} title="Operation log" sub="Every tool call: time, tool, permission tier, input hash, approval ID, result."
+          <SectionTitle icon={<ScrollText className="h-5 w-5" />} title="Operation log" sub={logLoading ? "Refreshing…" : "Every tool call: time, tool, permission tier, input hash, approval ID, result."}
             right={<button className="btn-secondary" onClick={async () => { window.location.href = await logUrl(); }}><Download className="h-4 w-4" /> Export JSON</button>} />
           <div className="max-h-80 overflow-auto">
             <table className="w-full text-xs">

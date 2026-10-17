@@ -8,7 +8,7 @@ import { OptionsStep } from "./components/OptionsStep";
 import { RiskStep } from "./components/RiskStep";
 import { Sidebar, STEPS } from "./components/Sidebar";
 import { StartStep } from "./components/StartStep";
-import { Callout, Spinner } from "./components/ui";
+import { Callout, Spinner, TopProgress } from "./components/ui";
 
 const INTRO = [
   "Start with the order. SolvOrder needs the purchase order and what you will pay the supplier; a quote, invoice or email helps the fraud checks.",
@@ -85,6 +85,7 @@ export default function App() {
 
   return (
     <div className="flex h-full">
+      <TopProgress />
       <Sidebar step={step} maxStep={maxStep} onStep={(i) => (i >= 2 && !analysis ? toRisk() : go(i))} ai={ai} onHowItWorks={() => setHow(true)} />
       <main ref={main} className="flex-1 overflow-y-auto">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/85 px-8 py-4 backdrop-blur">
@@ -94,9 +95,9 @@ export default function App() {
               <h2 className="text-xl font-extrabold text-slate-900">{STEPS[step].title}</h2>
               <p className="max-w-3xl text-sm text-slate-500">{INTRO[step]}</p>
             </div>
-            <div className="flex items-center gap-3">
-              {busy && <Spinner text="Recalculating…" />}
-              {view && <button className="btn-secondary" onClick={() => restart()}><RotateCcw className="h-4 w-4" /> New case</button>}
+            <div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
+              {busy && step >= 2 && <Spinner text="Updating results…" />}
+              {view && <button className="btn-secondary whitespace-nowrap" disabled={busy} onClick={() => restart()}><RotateCcw className="h-4 w-4" /> New case</button>}
             </div>
           </div>
         </header>
@@ -107,10 +108,10 @@ export default function App() {
           </Callout>}
 
           {step === 0 && <StartStep aiOn={!!ai?.gemini} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); }} />}
-          {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} />}
-          {step === 2 && analysis && <RiskStep a={analysis} reading={reading} setReading={setReading} onNext={() => go(3)}
+          {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} analysing={busy} />}
+          {step === 2 && analysis && <RiskStep a={analysis} reading={reading} setReading={setReading} onNext={() => go(3)} updating={busy}
             onConfirm={(k) => setFacts((f) => ({ ...f, confirmed: new Set([...f.confirmed, k]) }))} />}
-          {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} />}
+          {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} updating={busy} />}
           {step === 4 && analysis && <ActStep key={analysis.verdict.winner + analysis.plans[0]?.version} a={analysis} refresh={async () => { await analyze(); }} />}
           {step >= 2 && !analysis && !busy && <Callout tone="info">Go back to <b>Check the facts</b> and press <b>Analyse my cash</b>.</Callout>}
         </div>
