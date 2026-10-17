@@ -126,9 +126,42 @@ async function handle<T>(r: Response): Promise<T> {
   throw new ApiError(r.status, msg);
 }
 
-// A server restart (or Cloud Run moving to a new instance) loses in-memory
-// sessions: start a fresh one and retry once. Steps that need earlier state
-// (analyse, approve) then report what is missing instead of failing silently.
+// ---- lost-session recovery ----
+// Sessions live in server memory, so a Cloud Run restart or a new instance
+// loses them. The client remembers how the current case was loaded (sample,
+// upload or manual entry) and which fraud flags the owner resolved; on a
+// "session expired" 404 it opens a new session, replays those calls and
+// retries the original request, so the owner never notices.
+type LoadCall = { path: string; body: Record<string, unknown> } | { files: File[]; pasted: string };
+let lastLoad: LoadCall | null = null;
+let resolvedFlags: { code: string; note: string }[] = [];
+const LOAD_PATHS = new Set(["/api/documents/sample", "/api/documents/manual"]);
+
+function remember(path: string, body: Record<string, unknown>) {
+  if (LOAD_PATHS.has(path)) { lastLoad = { path, body }; resolvedFlags = []; }
+  else if (path === "/api/flags/resolve") resolvedFlags.push({ code: String(body.code), note: String(body.note) });
+}
+
+function jsonPost(path: string, sid: string, body: Record<string, unknown>) {
+  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sid, ...body }) });
+}
+
+function uploadPost(sid: string, files: File[], pasted: string) {
+  const fd = new FormData();
+  fd.append("session_id", sid);
+  files.forEach((f) => fd.append("files", f));
+  if (pasted.trim()) fd.append("pasted", pasted);
+  return fetch("/api/documents/upload", { method: "POST", body: fd });
+}
+
+async function replay(sid: string) {
+  if (!lastLoad) return;
+  await handle(await ("path" in lastLoad ? jsonPost(lastLoad.path, sid, lastLoad.body) : uploadPost(sid, lastLoad.files, lastLoad.pasted)));
+  for (const r of resolvedFlags) await handle(await jsonPost("/api/flags/resolve", sid, r));
+}
+
+export function forgetCase() { lastLoad = null; resolvedFlags = []; }
+
 async function withSession<T>(send: (sid: string) => Promise<Response>): Promise<T> {
   return tracked(withSessionInner<T>(send));
 }
@@ -138,17 +171,18 @@ async function withSessionInner<T>(send: (sid: string) => Promise<Response>): Pr
     return await handle<T>(await send(await session()));
   } catch (e) {
     if (e instanceof ApiError && e.status === 404 && sessionId === null) {
-      return handle<T>(await send(await newSession()));
+      const sid = await newSession();
+      await replay(sid);
+      return handle<T>(await send(sid));
     }
     throw e;
   }
 }
 
 export async function post<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
-  return withSession<T>((sid) => fetch(path, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sid, ...body }),
-  }));
+  const r = await withSession<T>((sid) => jsonPost(path, sid, body));
+  remember(path, body);
+  return r;
 }
 
 export async function get<T>(path: string): Promise<T> {
@@ -156,13 +190,9 @@ export async function get<T>(path: string): Promise<T> {
 }
 
 export async function upload(files: File[], pasted: string): Promise<DocView> {
-  return withSession<DocView>((sid) => {
-    const fd = new FormData();
-    fd.append("session_id", sid);
-    files.forEach((f) => fd.append("files", f));
-    if (pasted.trim()) fd.append("pasted", pasted);
-    return fetch("/api/documents/upload", { method: "POST", body: fd });
-  });
+  const r = await withSession<DocView>((sid) => uploadPost(sid, files, pasted));
+  lastLoad = { files, pasted }; resolvedFlags = [];
+  return r;
 }
 
 export const logUrl = async () => `/api/log/export?session_id=${encodeURIComponent(await session())}`;

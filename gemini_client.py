@@ -115,6 +115,28 @@ def _fallback_models() -> list[str]:
     return out
 
 
+_NO_THINKING: set[str] = set()
+
+
+def _with_thinking(config, model: str):
+    """Reading documents and rewording text need little reasoning, and default
+    "thinking" makes each call 3-5x slower. GEMINI_THINKING (minimal | low |
+    medium | high | default) tunes it; models that reject it get no setting."""
+    from google.genai import types
+
+    level = os.environ.get("GEMINI_THINKING", "low").strip().upper()
+    if level == "DEFAULT" or model in _NO_THINKING or not hasattr(types, "ThinkingLevel"):
+        return config
+    config = config or types.GenerateContentConfig()
+    if config.thinking_config is None:
+        try:
+            config = config.model_copy(update={"thinking_config": types.ThinkingConfig(
+                thinking_level=getattr(types.ThinkingLevel, level))})
+        except AttributeError:
+            return config
+    return config
+
+
 def _generate(contents: list[str], config=None) -> str:
     """Call Gemini with retry for transient 503s and a model fallback.
 
@@ -126,14 +148,16 @@ def _generate(contents: list[str], config=None) -> str:
     for model in _fallback_models():
         for attempt in range(3):
             try:
-                kwargs = {"model": model, "contents": contents}
-                if config is not None:
-                    kwargs["config"] = config
+                kwargs = {"model": model, "contents": contents,
+                          "config": _with_thinking(config, model)}
                 resp = _client().models.generate_content(**kwargs)
                 return (resp.text or "").strip()
             except Exception as exc:
                 last = exc
                 s = str(exc)
+                if ("thinking" in s.lower() or "INVALID_ARGUMENT" in s) and model not in _NO_THINKING:
+                    _NO_THINKING.add(model)  # this model rejects the setting: retry without it
+                    continue
                 if "404" in s or "NOT_FOUND" in s or "429" in s or "RESOURCE_EXHAUSTED" in s:
                     break  # try the next model
                 if "503" in s or "UNAVAILABLE" in s:

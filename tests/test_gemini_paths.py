@@ -191,3 +191,70 @@ def test_gemini_document_failure_falls_back_to_parser(monkeypatch):
     doc_extract._CACHE.clear()
     facts, mode, note = doc_extract.extract_facts(_fraud_docs())
     assert mode == "parser" and "Gemini could not read" in note and facts.order_value.present
+
+
+def test_concurrent_reads_share_one_gemini_call_and_get_private_copies(monkeypatch):
+    """Startup warm-up and a visitor asking for the same sample make one model call;
+    each caller gets its own Facts object, so one session can't edit another's."""
+    import threading
+    import time
+
+    import doc_extract
+
+    calls = []
+
+    def slow(docs):
+        calls.append(1)
+        time.sleep(0.2)
+        return _model_output()
+
+    monkeypatch.setattr(gemini_client, "gemini_available", lambda: True)
+    monkeypatch.setattr(gemini_client, "extract_order_documents", slow)
+    doc_extract._CACHE.clear()
+    out = []
+    threads = [threading.Thread(target=lambda: out.append(doc_extract.extract_facts(_fraud_docs())))
+               for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1 and len(out) == 3
+    assert out[0][0] is not out[1][0] and out[0][0].order_value.value == out[1][0].order_value.value
+    docs = _fraud_docs()
+    doc_extract.extract_facts(docs)  # cache hit still applies Gemini's document kinds
+    assert {d.kind for d in docs} >= {"purchase_order"}
+    doc_extract._CACHE.clear()
+
+
+def test_failed_gemini_read_is_not_cached(monkeypatch):
+    import doc_extract
+
+    state = {"fail": True}
+
+    def flaky(docs):
+        if state["fail"]:
+            raise RuntimeError("503")
+        return _model_output()
+
+    monkeypatch.setattr(gemini_client, "gemini_available", lambda: True)
+    monkeypatch.setattr(gemini_client, "extract_order_documents", flaky)
+    doc_extract._CACHE.clear()
+    assert doc_extract.extract_facts(_fraud_docs())[1] == "parser"
+    state["fail"] = False
+    assert doc_extract.extract_facts(_fraud_docs())[1] == "gemini"
+    doc_extract._CACHE.clear()
+
+
+def test_thinking_level_is_set_and_dropped_for_models_that_reject_it(monkeypatch):
+    from google.genai import types
+
+    cfg = gemini_client._with_thinking(types.GenerateContentConfig(temperature=0), "m1")
+    assert cfg.thinking_config.thinking_level == types.ThinkingLevel.LOW and cfg.temperature == 0
+    monkeypatch.setenv("GEMINI_THINKING", "default")
+    assert gemini_client._with_thinking(None, "m1") is None
+    monkeypatch.delenv("GEMINI_THINKING")
+    gemini_client._NO_THINKING.add("old-model")
+    try:
+        assert gemini_client._with_thinking(None, "old-model") is None
+    finally:
+        gemini_client._NO_THINKING.discard("old-model")

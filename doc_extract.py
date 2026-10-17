@@ -12,9 +12,11 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import re
+import threading
 
 from docmodel import (FACT_LABELS, SIMULATION_FACTS, BankDetail, Document, Fact, Facts,
                       LineItem, SupplierPayment)
@@ -22,7 +24,9 @@ from docparse import parse_amount, parse_amounts, parse_day, parse_percent
 
 LOW_CONFIDENCE = 0.7
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # per file
-_CACHE: dict[str, tuple[Facts, str, str]] = {}
+_CACHE: dict[str, tuple[Facts, str, str, dict]] = {}  # key -> facts, mode, note, doc kinds
+_KEY_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
 
 
 # ------------------------------------------------------------------ reading
@@ -81,13 +85,32 @@ def classify(text: str) -> str:
 
 
 def extract_facts(docs: list[Document]) -> tuple[Facts, str, str]:
-    """(facts, mode, note). mode: gemini | gemini-pdf | parser. Never raises."""
-    import gemini_client
+    """(facts, mode, note). mode: gemini | gemini-pdf | parser. Never raises.
 
+    Results are cached per document set. A per-key lock means two requests for
+    the same documents (e.g. the startup warm-up and a visitor) share one
+    Gemini call. Callers get a deep copy, so one session can't alter another's.
+    """
     key = hashlib.sha256(b"".join(
         d.doc_id.encode() + (d.text.encode() or (d.pdf_bytes or b"")) for d in docs)).hexdigest()
-    if key in _CACHE:
-        return _CACHE[key]
+    with _LOCKS_GUARD:
+        lock = _KEY_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        if key in _CACHE:
+            facts, mode, note, kinds = _CACHE[key]
+        else:
+            facts, mode, note, kinds, cacheable = _extract_uncached(docs)
+            if cacheable:  # a failed Gemini call is not cached, so a retry can succeed
+                _CACHE[key] = (facts, mode, note, kinds)
+    for d in docs:
+        d.kind = kinds.get(d.doc_id, d.kind)
+    return copy.deepcopy(facts), mode, note
+
+
+def _extract_uncached(docs: list[Document]) -> tuple[Facts, str, str, dict, bool]:
+    """(facts, mode, note, doc kinds, cacheable)."""
+    import gemini_client
+
     scanned = [d for d in docs if not d.has_text]
     if gemini_client.gemini_available():
         try:
@@ -100,20 +123,19 @@ def extract_facts(docs: list[Document]) -> tuple[Facts, str, str]:
             if scanned:
                 note += (f" {len(scanned)} scanned PDF(s) have no text layer: their facts "
                          f"cannot be checked automatically and need your confirmation.")
-            _CACHE[key] = (facts, mode, note)
-            return _CACHE[key]
+            return facts, mode, note, {d.doc_id: d.kind for d in docs}, True
         except Exception as exc:  # never block the demo on the model
             facts = parse_template(docs)
             verify_facts(facts, docs)
             return facts, "parser", (f"Gemini could not read the documents ({exc}); used the "
-                                     f"deterministic parser. Please check every field.")
+                                     f"deterministic parser. Please check every field."), \
+                {d.doc_id: d.kind for d in docs}, False
     facts = parse_template(docs)
     verify_facts(facts, docs)
     note = "Gemini is not configured; used the deterministic parser for the standard layout."
     if scanned:
         note += " Scanned PDFs cannot be read without Gemini: enter their facts manually."
-    _CACHE[key] = (facts, "parser", note)
-    return _CACHE[key]
+    return facts, "parser", note, {d.doc_id: d.kind for d in docs}, True
 
 
 def facts_from_model(data: dict, docs: list[Document]) -> Facts:

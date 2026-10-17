@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -46,7 +48,14 @@ WEB_DIST = ROOT / "web" / "dist"
 MAX_SESSIONS = 300
 MAX_FILES = 6
 
-app = FastAPI(title="SolvOrder API", version="1.0")
+@asynccontextmanager
+async def _lifespan(_app):
+    if gemini_client.gemini_available() and os.environ.get("SOLVORDER_WARM_SAMPLES", "1") != "0":
+        threading.Thread(target=_warm_samples, name="warm-samples", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="SolvOrder API", version="1.0", lifespan=_lifespan)
 
 
 # ------------------------------------------------------------------ session
@@ -240,6 +249,22 @@ def _ingest(s: Session, docs: list, profile, sample_id: str | None) -> dict:
     return _documents_view(s)
 
 
+def _sample_docs(meta: dict) -> list:
+    return [doc_extract.read_upload(f"DOC-{i}", name, (SAMPLES / meta["id"] / name).read_bytes())
+            for i, name in enumerate(meta["files"], 1)]
+
+
+def _warm_samples() -> None:
+    """Read every sample pack once in the background, so the first visitor who
+    picks a sample gets Gemini's result from the cache instead of waiting ~20 s.
+    Off with SOLVORDER_WARM_SAMPLES=0; skipped when Gemini is not configured."""
+    for meta in _packs():
+        try:
+            doc_extract.extract_facts(_sample_docs(meta))
+        except Exception as exc:  # warm-up is best effort; the request path retries
+            print(f"[warm-up] sample {meta['id']} failed: {exc}", flush=True)
+
+
 class SampleReq(BaseModel):
     session_id: str
     pack: str
@@ -251,8 +276,7 @@ def load_sample(req: SampleReq):
     meta = next((p for p in _packs() if p["id"] == req.pack), None)
     if meta is None:
         raise HTTPException(404, "Unknown sample")
-    docs = [doc_extract.read_upload(f"DOC-{i}", name, (SAMPLES / req.pack / name).read_bytes())
-            for i, name in enumerate(meta["files"], 1)]
+    docs = _sample_docs(meta)
     profile = case_builder.profile_from_json(
         json.loads((SAMPLES / req.pack / "profile.json").read_text()))
     return _ingest(s, docs, profile, req.pack)

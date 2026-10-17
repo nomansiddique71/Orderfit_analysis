@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RotateCcw } from "lucide-react";
-import { ApiError, get, post, resetSession, type Analysis, type DocView } from "./api";
+import { ApiError, forgetCase, get, post, resetSession, type Analysis, type DocView } from "./api";
 import { ActStep } from "./components/ActStep";
 import { FactsStep, type FactState } from "./components/FactsStep";
 import { HowItWorks } from "./components/HowItWorks";
@@ -41,7 +41,7 @@ export default function App() {
   const setControls = (c: Partial<typeof controls>) => setControlsState((s) => ({ ...s, ...c }));
 
   const restart = useCallback((msg?: string) => {
-    resetSession(); setView(null); setAnalysis(null); setFacts(EMPTY); setReading(null);
+    resetSession(); forgetCase(); setView(null); setAnalysis(null); setFacts(EMPTY); setReading(null);
     setControlsState({ priority: "maximize_margin", stress: 15, payDay: null, tie: null });
     setStep(0); setMaxStep(0); setError(msg ?? null);
   }, []);
