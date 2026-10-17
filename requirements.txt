@@ -1,6 +1,9 @@
-streamlit>=1.37
-pandas>=2.0
-altair>=5.0
+# Pinned to the versions the test suite runs against, so a Cloud Run build
+# installs exactly what was tested (the app uses Streamlit APIs newer than 1.37).
+streamlit==1.66.0
+pandas==3.0.6
+altair==6.3.0
 
-# Optional: Gemini explanations / Q&A (app degrades to templates without it)
-google-genai>=1.0
+# Gemini (Vertex AI or API key). The app degrades to templates without it.
+google-genai==2.31.0
+pydantic==2.14.1

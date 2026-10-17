@@ -10,3 +10,6 @@ venv/
 # Secrets and local files
 .env
 install.sh
+
+# Local tool config
+.claude/

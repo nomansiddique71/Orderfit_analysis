@@ -9,3 +9,6 @@ __pycache__/
 test.py
 install.sh
 streamlit.log
+.claude/
+tests/
+requirements-dev.txt
