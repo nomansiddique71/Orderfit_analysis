@@ -19,12 +19,21 @@ Every plan has a **money breakdown**: each payment in and out by day, the
 running balance, totals, profit, and plain reasons to accept or not, all from
 the engine's numbers. The owner's **company profile** says which side of a deal
 they are usually on (**seller**: a customer's order, or **buyer**: a supplier's
-offer) and the currency the business runs in (BDT, INR, USD, GBP, EUR; never
-converted). For each case SolvOrder checks the role against the documents and
+offer) and the currency the business runs in (BDT, INR, USD, GBP, EUR). Amounts
+written in another currency are converted to it: **Gemini with Google Search
+finds the exchange rate for the document's date** (today's rate, labelled, when
+the document has no date), the conversion itself is exact Decimal arithmetic,
+and every converted value shows what the document wrote and the rate used. The
+owner can correct a rate; implausible rates are flagged; without Gemini the
+owner is asked for the rate. Sample cases keep their own currency. For each case SolvOrder checks the role against the documents and
 asks when they disagree. After the owner approves a plan, **Notify my customer**
 (seller) or **Notify my supplier** (buyer) emails the other side from the
 approved plan through a demo outbox, books the plan in a **sandbox** (simulated
-bank, mock lender portal), and files plan and emails under **Approved plans**.
+bank, mock lender portal), and files plan and emails under **Approved / declined
+plans**. When **no way of accepting keeps the reserve**, the only recommendation
+is to decline: SolvOrder shows why each option fails (and any engine-verified
+change that would make the deal work) and sends a polite, justified decline to
+the customer or supplier, filed with the same record.
 Synthetic data only: no real bank, lender or email is ever touched.
 
 ## How it covers the BFSI track
@@ -156,13 +165,16 @@ interface instead.
 3. *See the cash risk*: the cash walk (today → payroll, bills, order costs → lowest point vs reserve) and the day-by-day chart.
 4. *Compare options*: switch to "Safest if paid late"; **choose a different plan** than the recommended one.
 5. *Approve & notify*: approve → **Notify my customer** → confirm the email → payments **blocked** by the fraud flags (Blocked in the log); the email still goes to the demo outbox.
-6. Back on *Check the facts*, choose "pay only the original account" / "verified by phone", approve again and notify → ledger matches the engine; open **Inside the sandbox**, the labelled log and **Approved plans**.
+6. Back on *Check the facts*, choose "pay only the original account" / "verified by phone", approve again and notify → ledger matches the engine; open **Inside the sandbox**, the labelled log and **Approved / declined plans**.
 7. **Profile → Your company**: set the company name, *Buyer*, and *BDT*; load **You are the buyer (BDT)**; open **See the money breakdown** on any plan; approve → **Notify my supplier**.
-8. **Option 2/3**: upload `samples/clean/*.pdf` or type a deal in the manual form → the intake pop-up asks only what is missing (your cash, reserve and payroll; as a buyer, the income you expect from the goods; your role if the documents disagree with your profile).
+8. **Currency**: profile currency *BDT*, then the manual form with "USD 30,000" and "USD 12,000" → the rate card (Gemini + Google Search, or enter it) and "৳36,42,000 in your currency · In the document: USD 30,000" under each amount.
+9. **Decline**: on *Check the facts* raise the reserve until nothing works → *Compare options* shows only "Decline the order" with each option's failure → *Decline and notify my customer* → the polite mail is filed under **Approved / declined plans**.
+10. **Option 2/3**: upload `samples/clean/*.pdf` or type a deal in the manual form → the intake pop-up asks only what is missing (your cash, reserve and payroll; as a buyer, the income you expect from the goods; your role if the documents disagree with your profile).
 
 ## Limits (honest)
 
-- Synthetic data; one business profile per case; one currency per case and no conversion (documents in another currency are flagged, not converted); days are counted from order confirmation (no calendar dates).
+- Synthetic data; one business profile per case; days are counted from order confirmation (calendar dates are read only for the exchange-rate date; 12/03/2026 is read day-first).
+- Exchange rates come from Gemini with Google Search (one rate per currency per case, for the document date); the sanity band only catches gross errors such as an inverted rate. Emails to the counterparty quote amounts in the owner's currency.
 - Buyer deals: the income from the goods is the owner's estimate (asked, not read from documents); a buyer's plans are supplier extension and loans (no customer to ask for an advance).
 - Notify sends to a demo outbox only; no real email is delivered. Approved plans live in server memory with the demo account.
 - Sessions and demo accounts live in server memory (no database): a restart clears them. The browser replays the current case after a restart, but accounts must sign up again. The demo login gates the UI; the analysis API itself is session-based, not account-based.
