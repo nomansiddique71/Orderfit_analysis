@@ -78,6 +78,15 @@ export interface CashWalk {
   out_until_low: Record<string, number>; in_until_low: Record<string, number>;
   rows: { day: number; label: string; group: string; kind: string; amount: number; balance: number; below_reserve: boolean }[];
 }
+export interface Breakdown {
+  plan_id: string; plan: string; verdict: "accept" | "reject" | "neutral"; summary: string;
+  reasons_for: string[]; reasons_against: string[];
+  opening: number; reserve: number; end: number; low: number; low_day: number; headroom: number;
+  money_in: Record<string, number>; money_out: Record<string, number>;
+  total_in: number; total_out: number; net_change: number;
+  profit: { income: number; costs: number; financing: number; net: number };
+  rows: { day: number; label: string; group: string; kind: string; counterparty: string; amount: number; balance: number; below_reserve: boolean }[];
+}
 export interface SentMessage { to: string; to_name: string; subject: string; body: string; source: string; status: string; sent: boolean }
 export interface Approval { id: string; plan_id: string; label: string; override: boolean; reason: string; version: string; messages: SentMessage[] }
 export interface Execution {

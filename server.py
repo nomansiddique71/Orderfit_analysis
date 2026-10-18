@@ -885,6 +885,25 @@ def _recipient(case, plan) -> tuple[str, str]:
     return who, f"accounts@{slug}.example"
 
 
+@app.post("/api/breakdown")
+def breakdown(req: PlanReq):
+    """Money in and out for one plan, day by day, with the reasons to accept it or not."""
+    s = _session(req.session_id)
+    last = _last(s)
+    run = last["run"]
+    r = run.results.get(req.plan_id or run.winner.plan.id)
+    if r is None:
+        raise HTTPException(404, "Unknown plan")
+    b = agent.plan_breakdown(run, r, last["pay_day"])
+    dec = lambda d: {k: num(v) for k, v in d.items()}  # noqa: E731
+    return {**b, **{k: num(b[k]) for k in ("opening", "reserve", "end", "low", "headroom",
+                                            "total_in", "total_out", "net_change")},
+            "money_in": dec(b["money_in"]), "money_out": dec(b["money_out"]),
+            "profit": dec(b["profit"]),
+            "rows": [{**x, "amount": num(x["amount"]), "balance": num(x["balance"])}
+                     for x in b["rows"]]}
+
+
 @app.post("/api/draft")
 def draft(req: PlanReq):
     """The engine's messages for any plan the owner is looking at."""

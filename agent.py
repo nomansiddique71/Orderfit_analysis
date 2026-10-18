@@ -789,7 +789,7 @@ def cash_walk(case: Case, plan: engine.Plan, pay_day: int) -> dict:
     for i, m in enumerate(movs):
         running += m.amount
         rows.append({"day": m.day, "label": m.label, "group": WALK_GROUPS.get(m.kind, m.kind),
-                     "kind": m.kind, "amount": m.amount, "balance": running,
+                     "kind": m.kind, "counterparty": m.counterparty, "amount": m.amount, "balance": running,
                      "below_reserve": running < case.reserve})
         if running < low:
             low_i, low = i, running
@@ -804,4 +804,124 @@ def cash_walk(case: Case, plan: engine.Plan, pay_day: int) -> dict:
         "low": low, "low_day": low_day, "headroom": low - case.reserve,
         "out_until_low": out, "in_until_low": inn,
         "end": running, "rows": rows,
+    }
+
+
+# ------------------------------------------------------- plan breakdown
+
+def amount_text(x: Decimal, cur: str) -> str:
+    """'BDT 1,20,000' / 'USD 30,000': lakh grouping for INR and BDT, as owners write it."""
+    neg, x = x < 0, abs(Decimal(x)).quantize(Decimal(1))
+    digits = f"{x:f}"
+    if cur in ("INR", "BDT") and len(digits) > 3:
+        head, tail = digits[:-3], digits[-3:]
+        parts = []
+        while len(head) > 2:
+            parts.insert(0, head[-2:])
+            head = head[:-2]
+        digits = ",".join([head, *parts, tail]) if head else ",".join([*parts, tail])
+    else:
+        digits = f"{x:,f}"
+    return f"{cur} {'-' if neg else ''}{digits}"
+
+
+def plan_breakdown(run: "AgentRun", result: SimulationResult, pay_day: int) -> dict:
+    """Every amount going out and coming in for one plan, the running balance,
+    totals by group over the whole horizon, and the reasons to accept or not.
+
+    Every number is the engine's (cash_walk / SimulationResult); the reasons are
+    fixed sentences filled with those numbers, so they cannot drift from the
+    simulation.
+    """
+    case, p, r = run.case, result.plan, result
+    cur = case.currency
+    m = lambda x: amount_text(x, cur)  # noqa: E731
+    walk = cash_walk(case, p, pay_day)
+    money_in: dict[str, Decimal] = {}
+    money_out: dict[str, Decimal] = {}
+    for row in walk["rows"]:
+        bucket = money_in if row["amount"] > 0 else money_out
+        bucket[row["group"]] = bucket.get(row["group"], ZERO) + abs(row["amount"])
+    total_in, total_out = sum(money_in.values(), ZERO), sum(money_out.values(), ZERO)
+
+    for_, against = [], []
+    tol = r.tolerance
+    if p.id == "decline":
+        for_.append(f"Your cash is untouched by this order: lowest {m(r.min_balance)} on day "
+                    f"{r.min_day}, from your existing bills and payroll only.")
+        against.append(f"You give up the order's {m(case.gross_margin)} profit.")
+        if any(x.feasible and x.plan.id != "decline" for x in run.results.values()):
+            against.append("At least one way of accepting the order keeps your reserve, so declining "
+                           "is not necessary.")
+    else:
+        if r.reserve_ok:
+            for_.append(f"Cash never falls below your {m(case.reserve)} reserve: the lowest point is "
+                        f"{m(r.min_balance)} on day {r.min_day}, {m(r.min_balance - case.reserve)} "
+                        f"above it.")
+        else:
+            gap = engine.funding_gap(r, case.reserve)
+            against.append(f"Cash falls to {m(r.min_balance)} on day {r.min_day}, "
+                           f"{m(case.reserve - r.min_balance)} below your {m(case.reserve)} reserve. "
+                           f"It is below the reserve from day {gap.from_day} for {gap.days} day(s).")
+        against += r.violations
+        if r.net_margin > 0:
+            for_.append(f"You make {m(r.net_margin)} profit: {m(case.order_value)} in from "
+                        f"{case.customer} minus {m(case.order_value - case.gross_margin)} of order costs"
+                        + (f" minus {m(r.financing_cost)} loan cost." if r.financing_cost else "."))
+        else:
+            against.append(f"You lose {m(-r.net_margin)} on this order after all costs.")
+        if tol is not None and r.feasible:
+            if tol.kind == "never_pays_safe":
+                for_.append(f"Safe even if {case.customer} never pays the balance.")
+            elif tol.kind == "days" and tol.days == 0:
+                against.append(f"No room for delay: if {case.customer} pays even one day after day "
+                               f"{tol.last_safe_pay_day}, cash falls below the reserve.")
+            elif tol.kind == "days":
+                (for_ if tol.days >= run.stress_delay else against).append(
+                    f"Still safe if {case.customer} pays up to {tol.days} day(s) late "
+                    f"(by day {tol.last_safe_pay_day}); later than that, cash falls below the reserve.")
+        if p.financing is None:
+            for_.append("No loan, so no interest or fees.")
+        else:
+            f = p.financing
+            against.append(f"Needs a {m(f.principal)} loan from {f.lender} ({f.terms_text()}): you repay "
+                           f"{m(f.principal + f.cost())} on day {f.repay_day}, so the loan costs "
+                           f"{m(f.cost())}.")
+        if p.advance_pct > 0:
+            adv = engine.money(case.balance_due * p.advance_pct)
+            against.append(f"Works only if {case.customer} agrees to pay {p.advance_pct * 100:.0f}% "
+                           f"({m(adv)}) upfront on day 0.")
+        if p.supplier_extension:
+            moved = [x for x in case.order_costs if x.deferrable_to is not None]
+            if moved:
+                against.append(f"Works only if {case.supplier or 'the supplier'} agrees to be paid later: "
+                               + "; ".join(f"{m(-x.amount)} moved from day {x.day} to day {x.deferrable_to}"
+                                           for x in moved) + ".")
+        if not p.depends_on_customer_consent and not p.depends_on_supplier_consent and p.financing is None:
+            for_.append("Nobody else has to agree: you can do this today.")
+    if p.id == run.winner.plan.id:
+        for_.insert(0, "SolvOrder recommends this plan for your priority.")
+    if p.id == "decline":
+        others = any(x.feasible and x.plan.id != "decline" for x in run.results.values())
+        verdict = "neutral"
+        summary = ("Declining keeps your cash safe, but you can also accept safely (see the other plans)."
+                   if others else "Declining is the only choice that keeps your cash above the reserve.")
+    elif r.feasible:
+        verdict = "accept"
+        summary = ("Recommended: safe to accept this way." if p.id == run.winner.plan.id
+                   else "Safe to accept this way, but not the top choice for your priority.")
+    else:
+        verdict = "reject"
+        summary = ("Do not accept this way: " + (against[0] if against else "it breaks a hard rule."))
+    return {
+        "plan_id": p.id, "plan": p.label, "verdict": verdict, "summary": summary,
+        "reasons_for": for_, "reasons_against": against,
+        "opening": walk["opening"], "reserve": case.reserve, "end": walk["end"],
+        "low": walk["low"], "low_day": walk["low_day"], "headroom": walk["headroom"],
+        "money_in": money_in, "money_out": money_out,
+        "total_in": total_in, "total_out": total_out, "net_change": total_in - total_out,
+        "profit": {"income": case.order_value if p.id != "decline" else ZERO,
+                   "costs": (case.order_value - case.gross_margin) if p.id != "decline" else ZERO,
+                   "financing": r.financing_cost, "net": r.net_margin},
+        "rows": walk["rows"],
     }

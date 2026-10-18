@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Banknote, Bot, CheckCircle2, FlaskConical, Grid3x3, HandCoins, MessageSquare, Scale, Send, SlidersHorizontal, XCircle } from "lucide-react";
+import { ArrowRight, Banknote, Bot, CheckCircle2, ListTree, FlaskConical, Grid3x3, HandCoins, MessageSquare, Scale, Send, SlidersHorizontal, XCircle } from "lucide-react";
 import { post, type Analysis, type Plan, type ScenarioResult } from "../api";
 import { money, planTitle } from "../format";
+import { BreakdownModal } from "./Breakdown";
 import { CashChart } from "./CashChart";
 import { Callout, Card, LoadingButton, Pill, SectionTitle, Segmented, Spinner, Updating } from "./ui";
 
@@ -14,7 +15,7 @@ export const PRIORITIES = [
 
 export type Choice = { id: string; override: boolean } | null;
 
-function OptionCard({ p, a, best, chosen, onChoose }: { p: Plan; a: Analysis; best: boolean; chosen: boolean; onChoose: () => void }) {
+function OptionCard({ p, a, best, chosen, onChoose, onBreakdown }: { p: Plan; a: Analysis; best: boolean; chosen: boolean; onChoose: () => void; onBreakdown: () => void }) {
   const cur = a.case.currency;
   return (
     <div className={`flex h-full flex-col rounded-2xl border-2 bg-white p-5 ${chosen ? "border-violet-500 shadow-lg shadow-violet-600/10" : best ? "border-brand-500 shadow-lg shadow-brand-600/10" : "border-slate-200"}`}>
@@ -34,7 +35,10 @@ function OptionCard({ p, a, best, chosen, onChoose }: { p: Plan; a: Analysis; be
         <dt className="text-slate-500">Paid late, still OK?</dt><dd className="text-right text-xs font-semibold">{p.tolerance?.label ?? "—"}</dd>
       </dl>
       <div className="mt-auto pt-3 text-xs text-slate-500">Needs agreement from: {p.consents.length ? p.consents.join(" and ") : "nobody"}</div>
-      <button className={`${chosen ? "btn-primary" : "btn-secondary"} mt-3 w-full`} onClick={onChoose}>
+      <button className="mt-3 flex w-full items-center justify-center gap-1 rounded-xl border border-dashed border-brand-300 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50" onClick={onBreakdown}>
+        <ListTree className="h-4 w-4" /> See the money breakdown
+      </button>
+      <button className={`${chosen ? "btn-primary" : "btn-secondary"} mt-2 w-full`} onClick={onChoose}>
         {chosen ? "Chosen: go to approval" : best ? "Go with the recommendation" : "Choose this plan instead"}
       </button>
     </div>
@@ -53,6 +57,7 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
   const failing = a.plans.filter((p) => !p.feasible);
   const [showAll, setShowAll] = useState(false);
   const shown = showAll ? feasible : feasible.slice(0, 5);
+  const [bd, setBd] = useState<Plan | null>(null);
 
   return (
     <div className="space-y-6">
@@ -97,8 +102,8 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
       <section>
         <SectionTitle icon={<Scale className="h-5 w-5" />} title="Your options, compared" sub="SolvOrder recommends one, but the choice is yours: pick any safe plan. Every number comes from the engine's day-by-day simulation." />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <OptionCard p={winner} a={a} best chosen={choice?.id === winner.id} onChoose={() => onChoose({ id: winner.id, override: false })} />
-          {shown.map((p) => <OptionCard key={p.id} p={p} a={a} best={false} chosen={choice?.id === p.id} onChoose={() => onChoose({ id: p.id, override: false })} />)}
+          <OptionCard p={winner} a={a} best chosen={choice?.id === winner.id} onChoose={() => onChoose({ id: winner.id, override: false })} onBreakdown={() => setBd(winner)} />
+          {shown.map((p) => <OptionCard key={p.id} p={p} a={a} best={false} chosen={choice?.id === p.id} onChoose={() => onChoose({ id: p.id, override: false })} onBreakdown={() => setBd(p)} />)}
         </div>
         {feasible.length > 5 && <button className="mt-3 text-sm font-semibold text-brand-700" onClick={() => setShowAll(!showAll)}>{showAll ? "Show fewer" : `Show all ${feasible.length + 1} safe plans`}</button>}
         {failing.length > 0 && (
@@ -109,6 +114,7 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
                 <li key={p.id} className="flex items-center justify-between gap-3 border-t border-slate-100 pt-1">
                   <span>{planTitle(p, cur)}</span>
                   <span className="flex items-center gap-3 text-right text-rose-700">{p.violations.join(" ") || `cash below reserve from day ${p.first_breach_day} (low ${money(p.min_balance, cur)})`}
+                    <button className="chip shrink-0 bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setBd(p)}>Breakdown</button>
                     {p.id !== "decline" && p.violations.length === 0 && !p.reserve_ok &&
                       <button className="chip shrink-0 bg-rose-100 text-rose-800 hover:bg-rose-200" onClick={() => onChoose({ id: p.id, override: true })}>Choose anyway (override)</button>}</span>
                 </li>))}
@@ -165,6 +171,7 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
       <div className="flex justify-end">
         <button className="btn-primary px-6 py-3 text-base" onClick={onNext}>Approve a plan <ArrowRight className="h-5 w-5" /></button>
       </div>
+      {bd && <BreakdownModal planId={bd.id} title={planTitle(bd, cur)} cur={cur} onClose={() => setBd(null)} />}
     </div>
   );
 }
