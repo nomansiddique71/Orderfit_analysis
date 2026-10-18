@@ -6,7 +6,7 @@ import { Callout, LoadingButton, Pill, Spinner } from "./ui";
 
 type Row = Record<string, string>;
 const ORDER_KEYS = new Set(["order_value", "delivery_day", "payment_terms_days", "advance_received", "expected_income", "income_days"]);
-const DEAL_KEYS = new Set([...ORDER_KEYS, "deal_role"]);
+const DEAL_KEYS = new Set([...ORDER_KEYS, "deal_role", "fx_rates"]);
 const LISTS: Record<string, { cols: [string, string, string][]; blank: Row }> = {
   recurring: { cols: [["label", "What", "Payroll"], ["amount", "Amount each time", "7000"], ["days", "Due on days", "15, 45"]], blank: { label: "", amount: "", days: "" } },
   receivables: { cols: [["label", "Who owes you", "Northlake Stores"], ["amount", "Amount", "4000"], ["day", "Expected on day", "25"]], blank: { label: "", amount: "", day: "" } },
@@ -45,6 +45,7 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
   const [lists, setLists] = useState<Record<string, Row[]>>({});
 
   const [roleNow, setRoleNow] = useState<Role>(role);
+  const [rates, setRates] = useState<Record<string, string>>({});
   const [switching, setSwitching] = useState(false);
   useEffect(() => {
     setNv(null);
@@ -66,7 +67,9 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
   }
 
   const businessAsked = !!nv?.needs.some((n) => !DEAL_KEYS.has(n.key));
-  const missingRequired = nv?.needs.filter((n) => n.key !== "deal_role" && n.required && (LIST_KEY[n.key]
+  const missingRequired = nv?.needs.filter((n) => n.key !== "deal_role" && n.required && (n.key === "fx_rates"
+    ? (n.rates ?? []).some((r) => !rates[r.currency]?.trim())
+    : LIST_KEY[n.key]
     ? !(lists[LIST_KEY[n.key]] ?? []).some((r) => r.amount?.trim())
     : !String(scalars[n.key] ?? "").trim())) ?? [];
 
@@ -76,6 +79,7 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
       const orderAnswers: Row = {};
       for (const k of ORDER_KEYS) if (scalars[k] !== undefined && nv?.needs.some((n) => n.key === k)) orderAnswers[k] = scalars[k];
       let view: DocView | null = null;
+      if (Object.keys(rates).length) view = await post<DocView>("/api/fx", { rates });
       if (businessAsked) {
         const filled = (k: string) => (lists[k] ?? []).filter((r) => Object.values(r).some((v) => v.trim()) && r[LISTS[k].cols[1][0]]?.trim());
         view = await post<DocView>("/api/profile", {
@@ -117,6 +121,21 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
             </div>
           ))}
           <button className="flex items-center gap-1 text-sm font-semibold text-brand-700" onClick={() => set([...rows, { ...spec.blank }])}><Plus className="h-4 w-4" /> Add a row</button>
+        </div>
+      );
+    }
+    if (n.widget === "fx") {
+      return (
+        <div className="space-y-2">
+          {(n.rates ?? []).map((r) => (
+            <label key={r.currency} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-semibold">1 {r.currency} =</span>
+              <input className="input w-36" inputMode="decimal" placeholder="e.g. 121.40" value={rates[r.currency] ?? ""}
+                onChange={(e) => setRates({ ...rates, [r.currency]: e.target.value })} />
+              <span className="font-semibold">{r.to}</span>
+              <span className="text-xs text-slate-500">rate for {r.date} ({r.date_note})</span>
+            </label>
+          ))}
         </div>
       );
     }

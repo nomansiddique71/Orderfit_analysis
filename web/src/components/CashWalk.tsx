@@ -81,7 +81,7 @@ export function CashWalk({ a }: { a: Analysis }) {
             {rows.map((r, i) => (
               <tr key={i} className={`border-t border-slate-100 ${r.below_reserve ? "bg-rose-50" : ""}`}>
                 <td className="py-1.5 text-slate-500">{r.day}</td>
-                <td>{r.label}<div className="text-xs text-slate-400">{r.group}</div></td>
+                <td>{r.label}<div className="text-xs text-slate-400">{r.group}</div>{r.note && <div className="text-xs text-sky-800">{r.note}</div>}</td>
                 <td className={`text-right ${r.amount < 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(r.amount, cur, { sign: true })}</td>
                 <td className={`text-right font-semibold ${r.below_reserve ? "text-rose-700" : ""}`}>{money(r.balance, cur)}</td>
               </tr>

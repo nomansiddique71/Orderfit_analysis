@@ -813,7 +813,7 @@ def cash_walk(case: Case, plan: engine.Plan, pay_day: int) -> dict:
     for i, m in enumerate(movs):
         running += m.amount
         rows.append({"day": m.day, "label": m.label, "group": walk_group(case, m.kind),
-                     "kind": m.kind, "counterparty": m.counterparty, "amount": m.amount, "balance": running,
+                     "kind": m.kind, "counterparty": m.counterparty, "note": m.note, "amount": m.amount, "balance": running,
                      "below_reserve": running < case.reserve})
         if running < low:
             low_i, low = i, running

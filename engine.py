@@ -35,6 +35,7 @@ class Movement:
     deferrable_to: int | None = None  # target day if the supplier grants an extension
     due_day: int | None = None  # contractual due day (receivables); < 0 = already overdue today
     tied_to_delivery: bool = False  # moves with the delivery date (e.g. paid on delivery)
+    note: str = ""  # e.g. what the document wrote before currency conversion
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,7 @@ class Case:
     #         what the owner expects to earn from the goods (may be 0); there is no
     #         customer to ask for an advance, so advance plans are not generated.
     role: str = "seller"
+    income_note: str = ""  # the order value as written, when it was converted (fx.py)
 
     @property
     def is_buyer(self) -> bool:
@@ -281,7 +283,7 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None,
         if plan.supplier_extension and m.deferrable_to is not None:
             out.append(
                 Movement(m.deferrable_to, m.amount, m.label + " (extended terms)", m.kind,
-                         m.counterparty, m.certain, None)
+                         m.counterparty, m.certain, None, note=m.note)
             )
         else:
             out.append(m)
@@ -298,7 +300,7 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None,
         if due > 0 or not case.is_buyer:  # a buyer expecting no income has no income row
             out.append(Movement(customer_payment_day + scenario.supplier_delay_days, max(due, ZERO),
                                 case.income_label + (" -- balance after advance" if advance else ""),
-                                "order_revenue", case.customer))
+                                "order_revenue", case.customer, note=case.income_note))
     if advance > 0:
         out.append(
             Movement(0, advance,

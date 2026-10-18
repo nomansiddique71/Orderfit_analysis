@@ -96,7 +96,7 @@ export function BreakdownModal({ planId, title, cur, onClose }: { planId: string
                   {b.rows.map((r, i) => (
                     <tr key={i} className={`border-t border-slate-100 ${r.below_reserve ? "bg-rose-50" : ""}`}>
                       <td className="py-1.5 text-slate-500">{r.day}</td>
-                      <td>{r.label}<div className="text-xs text-slate-400">{r.group}</div></td>
+                      <td>{r.label}<div className="text-xs text-slate-400">{r.group}</div>{r.note && <div className="text-xs text-sky-800">{r.note}</div>}</td>
                       <td className="text-xs text-slate-500">{r.counterparty}</td>
                       <td className="text-right text-emerald-700">{r.amount > 0 ? money(r.amount, cur) : ""}</td>
                       <td className="text-right text-rose-700">{r.amount < 0 ? money(-r.amount, cur) : ""}</td>

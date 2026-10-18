@@ -84,6 +84,9 @@ class Facts:
     # earn from the goods and when. Given by the owner, never read from documents.
     expected_income: Fact = field(default_factory=lambda: Fact(""))
     income_days: Fact = field(default_factory=lambda: Fact(""))
+    # Calendar date of the documents: the exchange-rate date for amounts written
+    # in another currency than the owner's (fx.py).
+    document_date: Fact = field(default_factory=lambda: Fact(""))
     supplier_payments: list[SupplierPayment] = field(default_factory=list)
     line_items: list[LineItem] = field(default_factory=list)
     bank_details: list[BankDetail] = field(default_factory=list)
@@ -94,7 +97,7 @@ class Facts:
         "customer_name", "order_ref", "order_value", "delivery_day", "payment_terms_days",
         "payment_terms_basis", "late_penalty_pct_per_week", "cancellation_clause",
         "supplier_name", "invoice_amount", "advance_received", "customer_email", "supplier_email",
-        "expected_income", "income_days",
+        "expected_income", "income_days", "document_date",
     )
 
     def scalars(self) -> dict[str, Fact]:
@@ -118,6 +121,7 @@ FACT_LABELS = {
     "supplier_email": "Supplier email",
     "expected_income": "Income you expect from these goods",
     "income_days": "Days after delivery that income arrives",
+    "document_date": "Document date (for exchange rates)",
 }
 
 # Facts that only make sense for one side of a deal (hidden for the other).

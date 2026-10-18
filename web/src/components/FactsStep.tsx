@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ArrowRight, BadgeCheck, Building2, ClipboardList, Eye, FileText, Landmark, PhoneCall, ShieldAlert, TriangleAlert } from "lucide-react";
-import { post, type DocView, type Fact, type Flag } from "../api";
+import { post, type DocView, type Fact, type Flag, type Original } from "../api";
 import { money } from "../format";
 import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle } from "./ui";
 import { CompanyCheck } from "./CompanyCheck";
@@ -94,6 +94,63 @@ const PROFILE_SOURCE: Record<string, [string, "blue" | "green" | "amber" | "slat
   example: ["Example numbers", "amber"], default: ["Not given yet", "amber"],
 };
 
+/** The value in the owner's currency, with what the document actually wrote. */
+function OriginalLine({ o }: { o: Original }) {
+  return (
+    <div className="mt-1 rounded-lg bg-sky-50 px-2 py-1 text-xs text-sky-900">
+      {o.converted !== null
+        ? <><b>{money(o.converted, o.to)}</b> in your currency · </>
+        : <><b>Exchange rate needed</b> · </>}
+      In the document: <b>{o.text}</b>{o.rate && <> · 1 {o.currency} = {o.rate.replace(/\.?0+$/, "")} {o.to} ({o.rate_date})</>}
+    </div>
+  );
+}
+
+/** Rates used to turn document amounts into the profile currency: Gemini's (Google Search) or the owner's. */
+function FxCard({ view, setView }: { view: DocView; setView: (v: DocView) => void }) {
+  const [edit, setEdit] = useState<Record<string, string>>({});
+  const [date, setDate] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  async function run(label: string, path: string, body: Record<string, unknown>) {
+    setBusy(label); setErr(null);
+    try { setView(await post<DocView>(path, body)); setEdit({}); } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+  }
+  const missing = view.fx.rates.some((r) => !r.rate);
+  return (
+    <Card className="p-6">
+      <SectionTitle icon={<Landmark className="h-5 w-5" />} title={`Amounts converted to ${view.fx.to}`}
+        sub="Your documents use another currency. Every page shows your profile currency; the document's own amount stays visible next to each value. Gemini only finds the rate: the conversion is exact arithmetic." />
+      <div className="space-y-3">
+        {view.fx.rates.map((r) => (
+          <div key={r.currency} className={`rounded-xl border p-4 ${!r.rate || r.suspicious ? "border-amber-300 bg-amber-50/50" : "border-slate-200"}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-base font-bold text-slate-900">{r.rate ? `1 ${r.currency} = ${r.rate.replace(/\.?0+$/, "")} ${r.to}` : `1 ${r.currency} = ? ${r.to}`}</span>
+              <Pill tone={r.mode === "gemini" ? "green" : r.mode === "owner" ? "blue" : "amber"}>{r.mode === "gemini" ? "Gemini · Google Search" : r.mode === "owner" ? "Entered by you" : "Rate needed"}</Pill>
+            </div>
+            <div className="mt-1 text-xs text-slate-600">Rate for {r.date} · {r.date_note}{r.source && ` · source: ${r.source}`}</div>
+            {r.sources.length > 0 && <div className="mt-1 flex flex-wrap gap-2 text-xs">{r.sources.map((s) => <a key={s.uri} href={s.uri} target="_blank" rel="noreferrer" className="text-brand-700 underline">{s.title}</a>)}</div>}
+            {r.note && <div className="mt-1 text-xs font-semibold text-amber-800">{r.note}</div>}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input className="input w-40" inputMode="decimal" placeholder={`${r.to} per ${r.currency}`} value={edit[r.currency] ?? ""} onChange={(e) => setEdit({ ...edit, [r.currency]: e.target.value })} />
+              <LoadingButton className="btn-secondary" loading={busy === r.currency} loadingText="Saving…" disabled={!edit[r.currency] || !!busy}
+                onClick={() => run(r.currency, "/api/fx", { rates: { [r.currency]: edit[r.currency] } })}>{r.rate ? "Correct the rate" : "Use this rate"}</LoadingButton>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-slate-600">Rate for another date:</span>
+        <input className="input w-44" placeholder="e.g. 12 March 2026" value={date} onChange={(e) => setDate(e.target.value)} />
+        <LoadingButton className="btn-secondary" loading={busy === "lookup"} loadingText="Gemini is searching…" disabled={!!busy}
+          onClick={() => run("lookup", "/api/fx/lookup", { date })}>Ask Gemini again</LoadingButton>
+      </div>
+      {missing && <p className="mt-2 text-xs text-amber-800">SolvOrder cannot calculate until every rate is set. It never guesses one.</p>}
+      {err && <p className="mt-2 text-xs text-rose-700">{err}</p>}
+    </Card>
+  );
+}
+
 const ROLE_SOURCE: Record<string, string> = {
   profile: "from your company profile", documents: "read from the documents", owner: "you chose it for this deal",
   sample: "this sample's business", default: "SolvOrder's default",
@@ -153,6 +210,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
       </Callout>
 
       <RoleBanner view={view} setView={setView} onOpenNeeds={onOpenNeeds} />
+      {view.fx.active && view.fx.rates.length > 0 && <FxCard view={view} setView={setView} />}
 
       {view.profile_source === "default" && (
         <Callout tone="warning" title="SolvOrder still needs your business's numbers"
@@ -191,6 +249,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
                 </div>
                 <div>
                   <input className="input" value={value} placeholder={PLACEHOLDER[f.key]} onChange={(e) => setState({ ...state, edits: { ...state.edits, [f.key]: e.target.value } })} />
+                  {f.original && <OriginalLine o={f.original} />}
                   <SourceQuote f={f} docs={view.documents} />
                   {f.note && <div className="mt-1 text-xs text-amber-700">{f.note}</div>}
                 </div>
@@ -222,7 +281,8 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
                   return (
                     <tr key={i} className="border-t border-slate-100 align-top">
                       <td className="px-3 py-2"><input className="input" value={p.label} onChange={(e) => set({ label: e.target.value })} /></td>
-                      <td className="px-3 py-2"><input className="input" value={p.amount} onChange={(e) => set({ amount: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input className="input" value={p.amount} onChange={(e) => set({ amount: e.target.value })} />
+                        {orig?.amount.original && p.amount === orig.amount.value && <OriginalLine o={orig.amount.original} />}</td>
                       <td className="px-3 py-2"><input className="input" value={p.day} disabled={p.paid} onChange={(e) => set({ day: e.target.value })} /></td>
                       <td className="px-3 py-2 text-center"><input type="checkbox" className="h-4 w-4 accent-teal-600" checked={p.paid} onChange={(e) => set({ paid: e.target.checked })} /></td>
                       <td className="px-3 py-2 text-xs text-slate-500">{orig?.amount.span ? `“${orig.amount.span}”` : "you"}{orig?.amount.note && <div className="text-amber-700">{orig.amount.note}</div>}</td>

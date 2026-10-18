@@ -120,3 +120,41 @@ def currency_of(text: str) -> str | None:
     """ISO code of the first currency marker in the text, or None."""
     m = _CURRENCY_RE.search(text or "")
     return _CURRENCY_CODES.get((m.group(1) or m.group(2)).lower()) if m else None
+
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+def parse_date(text: str):
+    """A calendar date written in a document -> datetime.date, or None.
+
+    Accepts 2026-03-12, 12 March 2026, 12 Mar 2026, March 12, 2026 and
+    12/03/2026 (day first, as written in South Asia and Europe). Day numbers
+    such as "Day 0" are not dates and return None."""
+    import datetime as dt
+
+    t = (text or "").strip()
+    m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", t)
+    parts = None
+    if m:
+        parts = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = m or None
+    if parts is None:
+        m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})\b", t)
+        if m and m.group(2)[:3].lower() in _MONTHS:
+            parts = int(m.group(3)), _MONTHS[m.group(2)[:3].lower()], int(m.group(1))
+    if parts is None:
+        m = re.search(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b", t)
+        if m and m.group(1)[:3].lower() in _MONTHS:
+            parts = int(m.group(3)), _MONTHS[m.group(1)[:3].lower()], int(m.group(2))
+    if parts is None:
+        m = re.search(r"\b(\d{1,2})[/.](\d{1,2})[/.](\d{4})\b", t)
+        if m:
+            parts = int(m.group(3)), int(m.group(2)), int(m.group(1))
+    if parts is None:
+        return None
+    try:
+        return dt.date(*parts)
+    except ValueError:
+        return None

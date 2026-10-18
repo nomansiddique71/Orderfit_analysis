@@ -63,12 +63,16 @@ NEEDS: dict[str, tuple[str, str, str]] = {
                     "Sets the day the income reaches your account."),
     "deal_role": ("role", "In this deal, are you the seller or the buyer?",
                   "The documents and your profile disagree."),
+    "fx_rates": ("fx", "Which exchange rate should SolvOrder use for the document amounts?",
+                 "Your documents are in another currency than your business. Every amount is "
+                 "converted to your profile currency; Gemini could not find the rate for the "
+                 "document date, so please enter it."),
 }
 
 BUSINESS_KEYS = ("business_name", "currency", "opening_cash", "reserve", "recurring",
                  "receivables", "loan_offers", "max_financing_cost")
 ORDER_KEYS = ("order_value", "delivery_day", "payment_terms_days", "advance_received",
-              "expected_income", "income_days", "deal_role")
+              "expected_income", "income_days", "deal_role", "fx_rates")
 SELLER_KEYS = {"order_value", "payment_terms_days", "advance_received"}
 BUYER_KEYS = {"expected_income", "income_days"}
 
@@ -76,7 +80,7 @@ BUYER_KEYS = {"expected_income", "income_days"}
 def allowed_keys(role: str) -> list[str]:
     """Keys Gemini may pick for this side of the deal."""
     drop = SELLER_KEYS if role == "buyer" else BUYER_KEYS
-    return [k for k in NEEDS if k not in drop and k != "deal_role"]
+    return [k for k in NEEDS if k not in drop and k not in ("deal_role", "fx_rates")]
 MAX_TEXT = 300
 
 
@@ -101,7 +105,7 @@ def _rule(key: str, required: bool) -> Need:
 
 def rule_needs(facts, edits: dict, profile_source: str,
                known: frozenset[str] = frozenset(), role: str = "seller",
-               role_conflict: bool = False) -> list[Need]:
+               role_conflict: bool = False, fx_missing: list[str] | None = None) -> list[Need]:
     """Missing deal facts first, then business facts the owner has not given.
     known: keys the owner's company profile already answers (e.g. currency).
     role: the owner's side; a buyer is asked about income from the goods instead
@@ -112,6 +116,8 @@ def rule_needs(facts, edits: dict, profile_source: str,
     out: list[Need] = []
     if role_conflict:
         out.append(_rule("deal_role", True))
+    if fx_missing:  # currencies whose rate Gemini could not find
+        out.append(_rule("fx_rates", True))
     if role == "buyer":
         income = val("expected_income").strip()
         if not income:
@@ -142,7 +148,7 @@ def merge(rules: list[Need], model: list[dict], known: frozenset[str] = frozense
     out: dict[str, Need] = {}
     for item in model:
         key = str(item.get("key", "")).strip()
-        if key not in NEEDS or key in out or key in known or key == "deal_role":
+        if key not in NEEDS or key in out or key in known or key in ("deal_role", "fx_rates"):
             continue
         widget, question, why = NEEDS[key]
         q = str(item.get("question", "")).strip()[:MAX_TEXT] or question

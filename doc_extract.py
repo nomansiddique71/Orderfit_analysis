@@ -20,7 +20,7 @@ import threading
 
 from docmodel import (FACT_LABELS, SIMULATION_FACTS, BankDetail, Document, Fact, Facts,
                       LineItem, SupplierPayment)
-from docparse import parse_amount, parse_amounts, parse_day, parse_percent
+from docparse import parse_amount, parse_amounts, parse_date, parse_day, parse_percent
 
 LOW_CONFIDENCE = 0.7
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # per file
@@ -209,6 +209,9 @@ def parse_template(docs: list[Document]) -> Facts:
             f.late_penalty_pct_per_week = _find(d, "Late delivery penalty", "Late delivery")
             f.cancellation_clause = _find(d, "Cancellation")
             f.advance_received = _find(d, "Advance received", "Advance paid", "Deposit received")
+            date = _find(d, "Date", "Issue date", "Order date", "PO date")
+            if date.present and parse_date(date.value):
+                f.document_date = date
             if not f.customer_email.present:
                 f.customer_email = _find(d, "Buyer contact", "Buyer email", "Customer email")
             for m in re.finditer(r"^\s*Item\s*\d+\s*[:\-]\s*(?P<desc>.+?)\s+(?P<amt>(USD|INR|Rs\.?|BDT|Tk\.?|GBP|EUR|[$₹৳£€])\s*[\d,\.]+\s*\w*)\s*$",
@@ -217,6 +220,9 @@ def parse_template(docs: list[Document]) -> Facts:
                                              Fact(m.group("amt"), d.doc_id, m.group(0).strip(), 0.9)))
         elif d.kind == "supplier_quote":
             f.supplier_name = _find(d, "Supplier", "From")
+            date = _find(d, "Date", "Quotation date", "Issue date")
+            if not f.document_date.present and date.present and parse_date(date.value):
+                f.document_date = date
             for m in re.finditer(r"^\s*\d+\.\s*(?P<label>[^:]+):\s*(?P<amt>.+?)\s+due\s+(?P<day>day\s*\d+)",
                                  d.text, re.IGNORECASE | re.MULTILINE):
                 span = m.group(0).strip()
@@ -316,8 +322,7 @@ BUYER_SKIPPED_FLAGS = {"NET_TERMS", "CANCELLATION"}
 
 def to_document_stage(facts: Facts, docs: list[Document], mode: str, note: str,
                       confirmed: frozenset[str] = frozenset(),
-                      resolved: dict[str, str] | None = None, currency: str | None = None,
-                      role: str = "seller"):
+                      resolved: dict[str, str] | None = None, role: str = "seller"):
     """Package verified facts as an agent.DocumentStage (fields, flags).
 
     role "buyer": facts and checks about a customer's payment terms do not apply
@@ -345,7 +350,7 @@ def to_document_stage(facts: Facts, docs: list[Document], mode: str, note: str,
             p.amount.source, p.amount.span, conf,
             None if verified and conf >= LOW_CONFIDENCE else
             (p.amount.note or p.day.note or "Please confirm this payment."), simulation=True))
-    flags = check_integrity(facts, docs, currency)
+    flags = check_integrity(facts, docs)
     if role == "buyer":
         flags = [f for f in flags if f.code not in BUYER_SKIPPED_FLAGS]
     for f in flags:

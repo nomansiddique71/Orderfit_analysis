@@ -40,6 +40,7 @@ import company_check
 import doc_extract
 import engine
 import gemini_client
+import fx
 import needs
 import role as roles
 from docmodel import (FACT_LABELS, SIMULATION_FACTS, Fact, Facts, SupplierPayment, fact_label,
@@ -94,6 +95,7 @@ class Session:
     ai_cache: dict = field(default_factory=dict)
     account: str = ""  # email of the logged-in owner who loaded the case ("" = anonymous API use)
     approved: list = field(default_factory=list)  # approved-plan records when nobody is logged in
+    fx: dict = field(default_factory=dict)  # document currency -> fx.FxRate into the profile currency
     role: str = "seller"  # the owner's side in THIS deal (seller | buyer)
     role_source: str = "default"  # profile | documents | owner | sample | default
     role_guess: roles.RoleGuess = field(default_factory=lambda: roles.RoleGuess(None, ""))
@@ -131,8 +133,13 @@ def num(x) -> float | None:
     return None if x is None else float(x)
 
 
-def _fact_json(key: str, f: Fact, role: str = "seller") -> dict:
+AMOUNT_FACTS = {"order_value", "invoice_amount", "advance_received"}
+
+
+def _fact_json(key: str, f: Fact, role: str = "seller", conv: "fx.Converter | None" = None) -> dict:
+    original = conv.original(f.value, f.span) if conv and key in AMOUNT_FACTS and f.present else None
     return {"key": key, "label": fact_label(key, role), "value": f.value, "source": f.source,
+            "original": original,
             "span": f.span, "confidence": round(f.confidence, 2), "verified": f.verified,
             "note": f.note, "simulation": key in SIMULATION_FACTS,
             "needs_review": key in SIMULATION_FACTS and f.present and
@@ -142,8 +149,9 @@ def _fact_json(key: str, f: Fact, role: str = "seller") -> dict:
 def _documents_view(s: Session) -> dict:
     f = s.facts
     stage = doc_extract.to_document_stage(f, s.docs, s.mode, s.note, resolved=s.resolved,
-                                          currency=_doc_currency(s), role=s.role)
+                                          role=s.role)
     shown = visible_facts(s.role)
+    conv = _converter(s)
     return {
         "mode": s.mode, "note": s.note, "sample_id": s.sample_id,
         "role": s.role, "role_source": s.role_source,
@@ -152,8 +160,11 @@ def _documents_view(s: Session) -> dict:
         "documents": [{"doc_id": d.doc_id, "filename": d.filename, "kind": d.kind,
                        "scanned": not d.has_text, "chars": len(d.text),
                        "text": d.text[:6000]} for d in s.docs],
-        "facts": [_fact_json(k, v, s.role) for k, v in f.scalars().items() if k in shown],
-        "supplier_payments": [{"label": p.label, "amount": _fact_json("amount", p.amount),
+        "facts": [_fact_json(k, v, s.role, conv) for k, v in f.scalars().items() if k in shown],
+        "fx": _fx_view(s),
+        "supplier_payments": [{"label": p.label, "amount": {**_fact_json("amount", p.amount),
+                                                            "original": conv.original(p.amount.value, p.amount.span)
+                                                            if conv else None},
                                "day": _fact_json("day", p.day), "paid": p.already_paid}
                               for p in f.supplier_payments],
         "line_items": [{"description": li.description, "amount": li.amount.value,
@@ -165,7 +176,7 @@ def _documents_view(s: Session) -> dict:
         "profile": s.profile.to_json() if s.profile else None,
         "profile_source": s.profile_source,
         "questions": sum(n.required for n in needs.rule_needs(
-            f, {}, s.profile_source, _profile_known(s), s.role, role_conflict(s))),
+            f, {}, s.profile_source, _profile_known(s), s.role, role_conflict(s), _fx_missing(s))),
     }
 
 
@@ -216,10 +227,6 @@ FLAG_OPTIONS: dict[str, list[tuple[str, str, bool, bool]]] = {
     "FREE_EMAIL": [("verify_sender", "Verify the contact by phone first", True, False),
                    ("ask_company_email", "Ask them to write from their company domain", True, False),
                    ("known_contact", "I know this contact personally; it is fine", True, True)],
-    "CURRENCY_MISMATCH": [("same_currency", "The amounts are already in my currency; the label is wrong",
-                           True, False),
-                          ("ask_my_currency", "Ask the sender for documents in my currency", True, False),
-                          ("checked", "I converted the amounts myself in the facts table", True, True)],
     "INJECTION": [("ignore", "Ignore the hidden instruction (SolvOrder already does)", True, False),
                   ("report", "Tell the sender their document contains an AI instruction", True, False)],
 }
@@ -351,11 +358,33 @@ def _currency(s: Session, fallback: str = "USD") -> str:
     return u.currency if u and s.profile_source != "sample" else fallback
 
 
-def _doc_currency(s: Session) -> str | None:
-    """The currency the documents are checked against: the owner's profile
-    currency for their own cases; samples are consistent by construction."""
-    u = _account(s)
-    return u.currency if u and s.profile_source != "sample" else None
+def _fx_active(s: Session) -> bool:
+    """Amounts are converted for the owner's own cases (a profile currency exists);
+    samples keep the currency their documents are written in."""
+    return _account(s) is not None and s.profile_source != "sample"
+
+
+def _converter(s: Session) -> "fx.Converter | None":
+    return fx.Converter(_currency(s), s.fx) if _fx_active(s) else None
+
+
+def _refresh_fx(s: Session, when=None, note: str = "") -> None:
+    """Look up (Gemini + Google Search) the rate for every currency the documents
+    use besides the profile currency, for the document date (or `when`)."""
+    s.fx = {}
+    if not _fx_active(s) or s.facts is None:
+        return
+    to = _currency(s)
+    date, date_note = (when, note) if when else fx.document_date(s.facts)
+    for cur in fx.foreign_currencies(s.facts, to):
+        s.fx[cur] = fx.lookup(cur, to, date, date_note)
+        s.log.append("gemini.exchange_rate", "T1", {"from": cur, "to": to, "date": date.isoformat()},
+                     None, f"{s.fx[cur].mode}: {s.fx[cur].rate}")
+
+
+def _fx_view(s: Session) -> dict:
+    return {"active": _fx_active(s), "to": _currency(s),
+            "rates": [r.to_json() for r in s.fx.values()]}
 
 
 def _set_role(s: Session, pack_role: str | None = None) -> None:
@@ -400,6 +429,7 @@ def _ingest(s: Session, docs: list, profile, sample_id: str | None,
     _set_profile(s, profile)
     s.facts, s.mode, s.note = doc_extract.extract_facts(docs)
     _set_role(s, pack_role)
+    _refresh_fx(s)
     s.last, s.approvals, s.active_approval, s.executed = {}, {}, None, None
     s.log.append("extract_fields", "T0", {"documents": [d.filename for d in docs]}, None,
                  f"{len(docs)} document(s) read via {s.mode}")
@@ -501,6 +531,7 @@ def manual(req: ManualReq, authorization: str | None = Header(default=None)):
     _set_role(s)
     if req.role in auth.ROLES:  # the manual form says which side the owner is on
         s.role, s.role_source = req.role, "owner"
+    _refresh_fx(s)
     s.last, s.approvals, s.active_approval, s.executed, s.resolved = {}, {}, None, None, {}
     s.log.append("manual_entry", "T0", {"fields": len(req.facts)}, None, "owner-entered facts")
     return _documents_view(s)
@@ -535,6 +566,55 @@ def companies(req: SessionReq):
     return {"parties": [{**p.to_json(), "rules": rules(p),
                          "google": g["results"].get(p.role)} for p in ps],
             "mode": g["mode"], "note": g["note"], "sources": g.get("sources", [])}
+
+
+def _fx_missing(s: Session) -> list[str]:
+    return [c for c, r in s.fx.items() if r.rate is None]
+
+
+class FxReq(BaseModel):
+    session_id: str
+    rates: dict[str, str] = Field(default_factory=dict)  # currency -> "121.40"
+
+
+@app.post("/api/fx")
+def set_fx(req: FxReq):
+    """The owner sets or corrects exchange rates (1 document currency = rate profile currency)."""
+    s = _session(req.session_id)
+    for cur, text in req.rates.items():
+        cur = cur.upper()
+        if cur not in s.fx:
+            raise HTTPException(404, f"The documents have no amounts in {cur}.")
+        try:
+            s.fx[cur] = fx.owner_rate(s.fx[cur], Decimal(str(text).replace(",", "").strip()))
+        except (ArithmeticError, ValueError) as exc:
+            raise HTTPException(400, f"{cur}: enter the rate as a number, e.g. 121.40 ({exc})") from exc
+        s.log.append("set_exchange_rate", "T1", {"currency": cur, "rate": text}, None,
+                     f"owner set 1 {cur} = {s.fx[cur].rate} {s.fx[cur].to}")
+    s.last = {}
+    return _documents_view(s)
+
+
+class FxLookupReq(BaseModel):
+    session_id: str
+    date: str = Field(default="", max_length=40)  # another date than the document's
+
+
+@app.post("/api/fx/lookup")
+def lookup_fx(req: FxLookupReq):
+    """Ask Gemini again (Google Search) for the rates, for the document date or a date the owner gives."""
+    s = _session(req.session_id)
+    if req.date.strip():
+        from docparse import parse_date
+
+        d = parse_date(req.date)
+        if d is None:
+            raise HTTPException(400, "Write the date like 2026-03-12 or 12 March 2026.")
+        _refresh_fx(s, d, f"date you chose ({d.isoformat()})")
+    else:
+        _refresh_fx(s)
+    s.last = {}
+    return _documents_view(s)
 
 
 class RoleReq(BaseModel):
@@ -581,10 +661,11 @@ def what_else(req: NeedsReq):
         raise HTTPException(400, "Load a sample or upload documents first.")
     edits = {k: str(v)[:200] for k, v in req.edits.items() if k in Facts.SCALAR_FIELDS}
     known = _profile_known(s)
-    rules = needs.rule_needs(s.facts, edits, s.profile_source, known, s.role, role_conflict(s))
+    rules = needs.rule_needs(s.facts, edits, s.profile_source, known, s.role, role_conflict(s),
+                             _fx_missing(s))
     ck = ("needs", hashlib.sha256(json.dumps(
         [{k: f.value for k, f in s.facts.scalars().items()}, edits, s.profile_source, sorted(known),
-         s.role, role_conflict(s),
+         s.role, role_conflict(s), _fx_missing(s), {c: str(r.rate) for c, r in s.fx.items()},
          [d.doc_id + d.text[:2000] for d in s.docs]], sort_keys=True).encode()).hexdigest())
     if ck not in s.ai_cache:
         mode, note, picked = "rules", "Gemini is not configured: standard checklist.", []
@@ -609,6 +690,8 @@ def what_else(req: NeedsReq):
     items, mode, note = s.ai_cache[ck]
     out = [n.to_json() for n in items]
     for n in out:
+        if n["key"] == "fx_rates":
+            n["rates"] = [s.fx[c].to_json() for c in _fx_missing(s)]
         if n["key"] == "deal_role":  # quote the documents' evidence in the question
             n["why"] = f"{s.role_guess.evidence} Your profile says you are usually the {s.role}."
             n["suggested"] = s.role_guess.role
@@ -707,7 +790,7 @@ def resolve_flag(req: ResolveReq):
     """The owner picks one of the suggested actions for a fraud/integrity check."""
     s = _session(req.session_id)
     stage = doc_extract.to_document_stage(s.facts, s.docs, s.mode, s.note,
-                                          currency=_doc_currency(s), role=s.role) if s.facts else None
+                                          role=s.role) if s.facts else None
     flag = next((f for f in (stage.integrity if stage else []) if f.code == req.code), None)
     if flag is None:
         raise HTTPException(404, "Unknown check")
@@ -761,7 +844,8 @@ def analyze(req: AnalyzeReq):
         profile = replace(profile, opening_cash=Decimal(str(round(req.opening_cash, 2))))
     if req.max_financing_cost is not None:
         profile = replace(profile, max_financing_cost=Decimal(str(round(max(req.max_financing_cost, 0), 2))))
-    built = case_builder.build_case(s.facts, profile, req.edits, req.payment_reading, s.role)
+    built = case_builder.build_case(s.facts, profile, req.edits, req.payment_reading, s.role,
+                                    _converter(s))
     if s.profile_source == "default":  # documents describe the order, not the business
         return {"ok": False, "needs_business": True,
                 "missing": built.missing + [BUSINESS_MISSING]}
@@ -773,7 +857,7 @@ def analyze(req: AnalyzeReq):
         raise HTTPException(400, "Payment day must be between 0 and 365")
 
     stage = doc_extract.to_document_stage(s.facts, s.docs, s.mode, s.note,
-                                          frozenset(req.confirmed), s.resolved, _doc_currency(s), s.role)
+                                          frozenset(req.confirmed), s.resolved, s.role)
     # owner edits count as confirmation of that field
     edited_labels = {FACT_LABELS.get(k) for k in req.edits}
     confirmed = frozenset(req.confirmed) | {f.key for f in stage.fields
@@ -803,6 +887,7 @@ def analyze(req: AnalyzeReq):
         "ok": True,
         "case": {"name": case.name, "currency": profile.currency, "business": profile.name,
                  "role": case.role, "deal": "offer" if case.is_buyer else "order",
+                 "fx": _fx_view(s),
                  "opening_cash": num(case.opening_cash), "reserve": num(case.reserve),
                  "order_value": num(case.order_value), "gross_margin": num(case.gross_margin),
                  "advance_received": num(case.advance_received),
@@ -815,7 +900,7 @@ def analyze(req: AnalyzeReq):
                  "assumptions": built.assumptions, "payment_readings": built.payment_readings,
                  "basis_used": built.basis_used,
                  "movements": [{"day": m.day, "amount": num(m.amount), "label": m.label,
-                                "counterparty": m.counterparty, "kind": m.kind}
+                                "counterparty": m.counterparty, "kind": m.kind, "note": m.note}
                                for m in sorted(case.base_movements + case.order_costs,
                                                key=lambda m: m.day)]},
         "verdict": {
@@ -1230,6 +1315,8 @@ TOOL_TEXT = {
     "simulate+rank_plans": "Cash simulated day by day and plans ranked",
     "request_approval": "You approved a plan", "outbox.send": "Email posted to the demo outbox",
     "set_role": "You set your side of the deal",
+    "gemini.exchange_rate": "Gemini looked up an exchange rate (Google Search)",
+    "set_exchange_rate": "You set an exchange rate",
     "lender.accept": "Loan accepted in the mock lender portal",
     "bank.post": "Payments booked in the simulated bank", "consistency_check":
     "Simulated bank compared with the engine's prediction", "execute_plan": "Execution attempt",

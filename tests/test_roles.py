@@ -130,17 +130,3 @@ def test_buyer_messages_go_to_the_supplier():
         assert [m["to_name"] for m in msgs] == ["Meghna Fabrics Ltd"]
     asis = client.post("/api/draft", json={"session_id": sid, "plan_id": "accept-as-is"}).json()
     assert "We accept your offer Q-77 (BDT 7,50,000)" in asis["messages"][0]["body"]
-
-
-def test_documents_in_another_currency_are_flagged_not_converted():
-    h, _ = _login()
-    _profile(h, business="Acme Trading Co.", currency="BDT")
-    sid = _session()
-    v = client.post("/api/documents/sample", headers=h,
-                    json={"session_id": sid, "pack": "clean"}).json()
-    assert not any(f["code"] == "CURRENCY_MISMATCH" for f in v["flags"])  # samples: own currency
-    sid, v = _manual(h, {"order_value": "USD 30,000", "delivery_day": "30", "payment_terms_days": "30",
-                         "payment_terms_basis": "after_delivery", "customer_name": "Meridian"},
-                     [{"label": "Deposit", "amount": "USD 12,000", "day": 0}])
-    flag = next(f for f in v["flags"] if f["code"] == "CURRENCY_MISMATCH")
-    assert "USD" in flag["title"] and "BDT" in flag["title"] and not flag["blocks_execution"]

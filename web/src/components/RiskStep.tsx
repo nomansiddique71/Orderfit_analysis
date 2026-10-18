@@ -128,7 +128,7 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext, updating }
                 {a.case.movements.map((m, i) => (
                   <tr key={i} className="border-t border-slate-100">
                     <td className="py-1.5 text-slate-500">{m.day}</td>
-                    <td>{m.label}<div className="text-xs text-slate-400">{m.counterparty}{m.kind === "order_cost" ? " · order cost" : ""}</div></td>
+                    <td>{m.label}<div className="text-xs text-slate-400">{m.counterparty}{m.kind === "order_cost" ? " · order cost" : ""}</div>{m.note && <div className="text-xs text-sky-800">{m.note}</div>}</td>
                     <td className={`text-right font-medium ${m.amount < 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(m.amount, cur, { sign: true })}</td>
                   </tr>
                 ))}

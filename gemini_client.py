@@ -322,6 +322,10 @@ Rules:
   (buyer) and of the supplier, as written in the purchase order / quote.
 - bank_details: every bank account given for paying the supplier, one entry
   per document that states one.
+- document_date: the calendar issue date of the purchase order or quote as
+  written (e.g. "12 March 2026", "2026-03-12"); empty if only day numbers
+  such as "Day 0" are given. Amounts keep their own currency as written: never
+  convert them.
 - confidence is 0.0-1.0; use < 0.7 when a value is ambiguous.
 - conflicts: short sentences describing terms that contradict each other
   across documents (amounts, dates, payee, bank account). Describe, do not judge.
@@ -387,6 +391,7 @@ def extract_order_documents(docs) -> dict:
         advance_received: Sourced
         customer_email: Sourced
         supplier_email: Sourced
+        document_date: Sourced
         supplier_payments: list[Payment]
         line_items: list[Item]
         bank_details: list[Bank]
@@ -505,6 +510,39 @@ def verify_companies_web(parties: list[dict]) -> tuple[list[dict], list[dict]]:
     except (AttributeError, IndexError, TypeError):
         pass
     return rows, sources
+
+
+FX_PROMPT = """Use Google Search to find the exchange rate from {cur} to {to} on {date}
+(a central-bank or widely used reference rate for that date; the closest earlier
+business day if that date has none).
+Return ONLY a JSON object:
+{{"rate": <number: how many {to} one {cur} buys>, "rate_date": "YYYY-MM-DD",
+  "source": "<publisher of the rate>"}}
+Do not round to fewer than 4 significant digits. Do not invert the rate.
+"""
+
+
+def exchange_rate(cur: str, to: str, date: str) -> tuple[dict, list[dict]]:
+    """Gemini + Google Search grounding: the rate for one date. Returns (data,
+    sources). Raises on failure; fx.lookup handles it."""
+    from google.genai import types
+
+    config = types.GenerateContentConfig(
+        temperature=0, tools=[types.Tool(google_search=types.GoogleSearch())])
+    resp = _generate_raw([FX_PROMPT.format(cur=cur, to=to, date=date)], config)
+    text = resp.text or ""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("no JSON in the answer")
+    data = json.loads(text[start:end + 1])
+    sources = []
+    try:
+        for ch in resp.candidates[0].grounding_metadata.grounding_chunks or []:
+            if ch.web and ch.web.uri:
+                sources.append({"title": ch.web.title or ch.web.uri, "uri": ch.web.uri})
+    except (AttributeError, IndexError, TypeError):
+        pass
+    return data, sources
 
 
 # ------------------------------------------------------- explain and ask

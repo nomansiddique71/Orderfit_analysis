@@ -44,6 +44,11 @@ class BusinessProfile:
         }
 
 
+def _doc_note(a) -> str:
+    """'In the document: USD 12,000 x 121.4 (2026-03-12)' for a converted amount."""
+    return f"In the document: {a.note}" if a is not None and "in the document" in a.note else ""
+
+
 def _zero_amount(text: str):
     """'0', 'none', 'nil' -> an amount of 0 (parse_amount ignores zero-only text)."""
     from docparse import ParsedAmount
@@ -99,36 +104,57 @@ class BuildResult:
 
 
 def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None,
-               payment_reading: str | None = None, role: str = "seller") -> BuildResult:
+               payment_reading: str | None = None, role: str = "seller",
+               fx=None) -> BuildResult:
     """edits: owner corrections keyed by fact name, plus optional
     'supplier_payments': [{"label", "amount", "day"}] replacing the extracted list.
 
     role "buyer": the deal is a supplier's offer. Costs are the supplier payments;
     the income is what the owner expects to earn from the goods ('expected_income',
     may be 0) arriving 'income_days' after delivery. Customer advances and the
-    customer's payment terms do not apply."""
+    customer's payment terms do not apply.
+
+    fx: fx.Converter -- amounts written in another currency are converted to the
+    profile currency at the rate the owner confirmed; a missing rate is reported
+    as missing, never guessed."""
     edits = edits or {}
     buyer = role == "buyer"
+    fx_missing: list[str] = []
 
     def val(name: str) -> str:
         return str(edits[name]) if name in edits else getattr(facts, name).value
+
+    def span(name: str) -> str:
+        return "" if name in edits else getattr(facts, name).span
+
+    def money_of(text: str, src: str = ""):
+        """(amount in the profile currency, raw text unreadable?)"""
+        if fx is None:
+            return parse_amount(text)
+        a, miss = fx.amount(text, src)
+        if miss and miss not in fx_missing:
+            fx_missing.append(miss)
+        return a
+
+    def unreadable(text: str) -> bool:
+        return parse_amount(text) is None
 
     missing, assumptions = [], []
     delivery = parse_day(val("delivery_day"))
     if buyer:
         income_text = (val("expected_income") or "").strip()
-        order_value = (parse_amount(income_text) or _zero_amount(income_text)) if income_text else None
+        order_value = (money_of(income_text) or _zero_amount(income_text)) if income_text else None
         terms = parse_day(val("income_days")) if (val("income_days") or "").strip() else None
         if terms is None and order_value is not None and order_value.value == 0:
             terms = 0  # no income: its day does not matter
-        if order_value is None:
+        if order_value is None and (not income_text or unreadable(income_text) and not _zero_amount(income_text)):
             missing.append("Income you expect from these goods (0 if none)")
         if terms is None:
             missing.append("Days after delivery that income arrives")
     else:
-        order_value = parse_amount(val("order_value"))
+        order_value = money_of(val("order_value"), span("order_value"))
         terms = parse_day(val("payment_terms_days"))
-        if order_value is None:
+        if order_value is None and unreadable(val("order_value")):
             missing.append("Order value")
         if terms is None:
             missing.append("Customer payment terms (days)")
@@ -136,33 +162,38 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
         missing.append("Goods arrive by (day)" if buyer else "Delivery day")
 
     advance_text = "" if buyer else (val("advance_received") or "").strip()
-    advance = parse_amount(advance_text) if advance_text else None
-    if advance_text and advance is None:
+    advance = money_of(advance_text, span("advance_received")) if advance_text else None
+    if advance_text and advance is None and unreadable(advance_text):
         missing.append("Advance already received (not a readable amount)")
     elif advance and order_value and advance.value > order_value.value:
         missing.append("Advance already received (larger than the order value)")
 
     if "supplier_payments" in edits:
+        spans = [p.amount.span for p in facts.supplier_payments]
         raw_payments = [(str(p.get("label", "Supplier payment")), str(p.get("amount", "")),
-                         str(p.get("day", "")), bool(p.get("paid", False)))
-                        for p in edits["supplier_payments"]]
+                         str(p.get("day", "")), bool(p.get("paid", False)),
+                         spans[i] if i < len(spans) else "")
+                        for i, p in enumerate(edits["supplier_payments"])]
     else:
-        raw_payments = [(p.label, p.amount.value, p.day.value, p.already_paid)
+        raw_payments = [(p.label, p.amount.value, p.day.value, p.already_paid, p.amount.span)
                         for p in facts.supplier_payments]
     payments, already_paid = [], D(0)
-    for label, amount, day, paid in raw_payments:
-        a = parse_amount(amount)
+    for label, amount, day, paid, src in raw_payments:
+        a = money_of(amount, src)
         if paid and a is not None:  # already out of the bank: no date needed
             already_paid += a.value
             continue
         d = parse_day(day)
+        if a is None and not unreadable(amount):
+            continue  # its exchange rate is missing: reported once below
         if a is None or d is None:
             missing.append(f"Amount/day for '{label}'")
         else:
-            payments.append((label, a.value, d))
+            payments.append((label, a.value, d, _doc_note(a)))
     if not payments and not already_paid:
         missing.append("At least one supplier payment")
 
+    missing += fx_missing
     if missing:
         return BuildResult(None, None, missing)
 
@@ -185,14 +216,14 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
 
     supplier = (val("supplier_name") or "Supplier").strip()
     costs = []
-    for label, amount, day in payments:
+    for label, amount, day, note in payments:
         shipping = any(w in label.lower() for w in SHIPPING_WORDS)
         costs.append(Movement(
             day, -amount, label, "order_cost",
             "Logistics" if shipping else supplier,
             deferrable_to=(None if shipping or day > delivery
                            else max(day, delivery) + EXTENSION_DAYS_AFTER_DELIVERY),
-            tied_to_delivery=day == delivery))
+            tied_to_delivery=day == delivery, note=note))
     assumptions.append(f"A supplier extension, if asked for, moves supplier payments due by "
                        f"delivery to day {delivery + EXTENSION_DAYS_AFTER_DELIVERY}.")
     penalty = D(0) if buyer else parse_percent(val("late_penalty_pct_per_week") or "") or D(0)
@@ -209,10 +240,10 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
         financing_offers=tuple(profile.offers), max_financing_cost=profile.max_financing_cost,
         supplier=supplier, late_penalty_pct_per_week=penalty, customer=customer, order_ref=ref,
         advance_received=advance.value if advance else D(0), costs_already_paid=already_paid,
-        currency=profile.currency, role=role)
+        currency=profile.currency, role=role, income_note=_doc_note(order_value))
     if buyer:
         assumptions.append(
-            f"You are the buyer: you pay {supplier} {sum(a for _, a, _ in payments) + already_paid:,.0f} "
+            f"You are the buyer: you pay {supplier} {sum(a for _, a, _, _ in payments) + already_paid:,.0f} "
             + (f"and expect {order_value.value:,.0f} from the goods on day {pay_day}."
                if order_value.value else "and expect no income from these goods within the plan."))
     if advance:

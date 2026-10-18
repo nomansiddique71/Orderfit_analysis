@@ -2,7 +2,14 @@
 
 export type Severity = "critical" | "warning" | "info";
 
+export interface Original { text: string; currency: string; amount: number; rate: string | null; rate_date: string; converted: number | null; to: string }
+export interface FxRate {
+  currency: string; to: string; rate: string | null; date: string; date_note: string;
+  mode: "gemini" | "owner" | "missing"; source: string; sources: { title: string; uri: string }[]; note: string; suspicious: boolean;
+}
+export interface FxView { active: boolean; to: string; rates: FxRate[] }
 export interface Fact {
+  original?: Original | null;
   key: string; label: string; value: string; source: string; span: string;
   confidence: number; verified: boolean; note: string; simulation: boolean; needs_review: boolean;
 }
@@ -25,11 +32,11 @@ export interface DocView {
   line_items: { description: string; amount: string; source: string }[];
   bank_details: { source: string; payee: string; bank: string; account: string; verified: boolean }[];
   flags: Flag[]; profile: Profile | null; profile_source: "sample" | "owner" | "example" | "default";
-  role: Role; role_source: "profile" | "documents" | "owner" | "sample" | "default";
+  role: Role; role_source: "profile" | "documents" | "owner" | "sample" | "default"; fx: FxView;
   role_guess: { role: Role | null; evidence: string }; currency: string;
   questions: number; // required intake questions still open
 }
-export interface Need { key: string; question: string; why: string; widget: string; source: "gemini" | "rules"; required: boolean; suggested?: Role | null }
+export interface Need { key: string; question: string; why: string; widget: string; source: "gemini" | "rules"; required: boolean; suggested?: Role | null; rates?: FxRate[] }
 export interface NeedsView { needs: Need[]; mode: "gemini" | "rules"; note: string; profile_source: string; profile: Profile | null }
 export interface Tolerance {
   kind: "never_pays_safe" | "fails_on_time" | "days"; days: number | null; label: string;
@@ -48,12 +55,12 @@ export interface Analysis {
   ok: boolean; missing?: string[]; needs_business?: boolean;
   case: {
     name: string; currency: string; business: string; opening_cash: number; reserve: number;
-    role: Role; deal: "order" | "offer";
+    role: Role; deal: "order" | "offer"; fx: FxView;
     order_value: number; gross_margin: number; delivery_day: number;
     advance_received: number; balance_due: number; costs_already_paid: number; customer: string; supplier: string;
     order_ref: string; pay_day: number; document_pay_day: number; max_financing_cost: number;
     assumptions: string[]; payment_readings: Record<string, number>; basis_used: string;
-    movements: { day: number; amount: number; label: string; counterparty: string; kind: string }[];
+    movements: { day: number; amount: number; label: string; counterparty: string; kind: string; note: string }[];
   };
   verdict: {
     headline: string; level: "LOW" | "MEDIUM" | "HIGH"; why: string; winner: string; provisional: boolean;
@@ -80,7 +87,7 @@ export interface Analysis {
 export interface CashWalk {
   plan: string; opening: number; reserve: number; low: number; low_day: number; headroom: number; end: number;
   out_until_low: Record<string, number>; in_until_low: Record<string, number>;
-  rows: { day: number; label: string; group: string; kind: string; amount: number; balance: number; below_reserve: boolean }[];
+  rows: { day: number; label: string; group: string; kind: string; note: string; amount: number; balance: number; below_reserve: boolean }[];
 }
 export interface Breakdown {
   plan_id: string; plan: string; verdict: "accept" | "reject" | "neutral"; summary: string;
@@ -89,7 +96,7 @@ export interface Breakdown {
   money_in: Record<string, number>; money_out: Record<string, number>;
   total_in: number; total_out: number; net_change: number;
   profit: { income: number; costs: number; financing: number; net: number };
-  rows: { day: number; label: string; group: string; kind: string; counterparty: string; amount: number; balance: number; below_reserve: boolean }[];
+  rows: { day: number; label: string; group: string; kind: string; counterparty: string; note: string; amount: number; balance: number; below_reserve: boolean }[];
 }
 export interface SentMessage { party?: string; to: string; to_name: string; subject: string; body: string; source: string; status: string; sent: boolean }
 export interface Approval { id: string; plan_id: string; label: string; override: boolean; reason: string; version: string; messages: SentMessage[]; notified: boolean }
