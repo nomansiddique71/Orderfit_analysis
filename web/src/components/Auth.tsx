@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { BadgeCheck, CircleCheck, Inbox, KeyRound, LogOut, Mail, PlayCircle, ShieldCheck, Sparkles, UserRound, X } from "lucide-react";
-import { authPost, setToken, type DemoMail, type User } from "../api";
+import { BadgeCheck, Building2, CircleCheck, Inbox, KeyRound, LogOut, Mail, PlayCircle, ShieldCheck, Sparkles, UserRound, X } from "lucide-react";
+import { authPost, setToken, type DemoMail, type Role, type User } from "../api";
+import { CURRENCIES } from "../format";
 import { Callout, LoadingButton, Pill } from "./ui";
 
 type Authed = { token: string; user: User };
@@ -150,7 +151,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: (a: Authed) => void }) {
 export function ProfileModal({ user, onClose, onUser, onLogout }: {
   user: User; onClose: () => void; onUser: (u: User) => void; onLogout: () => void;
 }) {
-  const [p, setP] = useState({ name: user.name, business: user.business });
+  const [p, setP] = useState({ name: user.name, business: user.business, company_email: user.company_email, role: user.role, currency: user.currency });
   const [pw, setPw] = useState({ old: "", next: "" });
   const [reset, setReset] = useState<{ pending: string; mail: DemoMail | null; code: string; next: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -181,12 +182,39 @@ export function ProfileModal({ user, onClose, onUser, onLogout }: {
           {msg && <Callout tone={msg.tone}>{msg.text}</Callout>}
           <section className="space-y-3">
             <h3 className="font-bold">Your details</h3>
+            <Field label="Name" value={p.name} onChange={(v) => setP({ ...p, name: v })} />
+          </section>
+
+          <section className="space-y-3 border-t border-slate-100 pt-5">
+            <h3 className="flex items-center gap-2 font-bold"><Building2 className="h-4 w-4 text-brand-700" /> Your company</h3>
+            <p className="text-xs text-slate-500">SolvOrder uses this to know which side of a deal you are on, who to notify after you approve a plan, and which currency to show.</p>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Name" value={p.name} onChange={(v) => setP({ ...p, name: v })} />
-              <Field label="Business name" value={p.business} onChange={(v) => setP({ ...p, business: v })} placeholder="Acme Trading Co." />
+              <Field label="Company name" value={p.business} onChange={(v) => setP({ ...p, business: v })} placeholder="Acme Trading Co." />
+              <Field label="Company email" type="email" value={p.company_email} onChange={(v) => setP({ ...p, company_email: v })} placeholder="accounts@yourcompany.com" />
             </div>
+            <div>
+              <span className="label">In my deals I am usually the…</span>
+              <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                {([["seller", "Seller (supplier)", "Customers send me orders; I buy what I need and deliver. I notify my customer."],
+                   ["buyer", "Buyer (customer)", "Suppliers send me quotes; I pay them for goods I use or resell. I notify my supplier."]] as [Role, string, string][]).map(([r, t, d]) => (
+                  <button key={r} type="button" onClick={() => setP({ ...p, role: r })}
+                    className={`rounded-2xl border-2 p-3 text-left ${p.role === r ? "border-brand-500 bg-brand-50" : "border-slate-200 hover:border-slate-300"}`}>
+                    <div className="text-sm font-bold text-slate-900">{t}</div>
+                    <div className="text-xs text-slate-500">{d}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-slate-500">You can change this any time. For uploaded or typed orders SolvOrder also checks your company name and email against the documents and asks you if they say otherwise.</p>
+            </div>
+            <label className="block">
+              <span className="label">Currency my business runs in</span>
+              <select className="input mt-1" value={p.currency} onChange={(e) => setP({ ...p, currency: e.target.value })}>
+                {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.symbol} {c.code} · {c.name}</option>)}
+              </select>
+              <span className="mt-1 block text-xs text-slate-500">Every amount you type and see is in this currency. SolvOrder never converts between currencies; sample cases keep the currency of their documents.</span>
+            </label>
             <LoadingButton className="btn-primary" loading={busy === "profile"} loadingText="Saving…"
-              onClick={() => run("profile", () => authPost<{ user: User }>("/api/auth/profile", p), (r) => onUser(r.user), "Profile saved.")}>Save details</LoadingButton>
+              onClick={() => run("profile", () => authPost<{ user: User }>("/api/auth/profile", p), (r) => onUser(r.user), "Profile saved.")}>Save profile</LoadingButton>
           </section>
 
           {!user.demo && (

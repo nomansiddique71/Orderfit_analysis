@@ -81,8 +81,10 @@ def _rule(key: str, required: bool) -> Need:
     return Need(key, question, why, widget, "rules", required)
 
 
-def rule_needs(facts, edits: dict, profile_source: str) -> list[Need]:
-    """Missing order facts first, then business facts the owner has not given."""
+def rule_needs(facts, edits: dict, profile_source: str,
+               known: frozenset[str] = frozenset()) -> list[Need]:
+    """Missing order facts first, then business facts the owner has not given.
+    known: keys the owner's company profile already answers (e.g. currency)."""
     def val(name: str) -> str:
         return str(edits[name]) if name in edits else getattr(facts, name).value
 
@@ -97,18 +99,20 @@ def rule_needs(facts, edits: dict, profile_source: str) -> list[Need]:
         out.append(_rule("advance_received", False))
     if profile_source == "default":  # nobody has given business facts yet
         for key in BUSINESS_KEYS:
-            out.append(_rule(key, key in ("opening_cash", "reserve", "recurring")))
+            if key not in known:
+                out.append(_rule(key, key in ("opening_cash", "reserve", "recurring")))
     return sorted(out, key=lambda n: not n.required)  # required first, order kept
 
 
-def merge(rules: list[Need], model: list[dict]) -> list[Need]:
+def merge(rules: list[Need], model: list[dict], known: frozenset[str] = frozenset()) -> list[Need]:
     """Gemini's picks (allowed keys only, its wording) first, then every rule need
-    it skipped. A need the rules mark required stays required."""
+    it skipped. A need the rules mark required stays required. Keys the company
+    profile already answers are never asked, whoever picks them."""
     required = {n.key: n.required for n in rules}
     out: dict[str, Need] = {}
     for item in model:
         key = str(item.get("key", "")).strip()
-        if key not in NEEDS or key in out:
+        if key not in NEEDS or key in out or key in known:
             continue
         widget, question, why = NEEDS[key]
         q = str(item.get("question", "")).strip()[:MAX_TEXT] or question

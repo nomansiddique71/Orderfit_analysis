@@ -27,6 +27,11 @@ PBKDF2_ROUNDS = 200_000
 MAX_USERS = 2000
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+$")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{3,30}$")
+# Currencies a business can choose on its profile (ISO codes). Amounts are never
+# converted: the owner types and reads every number in this one currency.
+CURRENCIES = ("BDT", "INR", "USD", "GBP", "EUR")
+ROLES = ("seller", "buyer")  # seller: I sell to a customer; buyer: I buy from a supplier
+MAX_APPROVED = 50  # approved plans kept per account (in memory)
 
 
 class AuthError(ValueError):
@@ -47,10 +52,16 @@ class User:
     created: float = field(default_factory=time.time)
     business: str = ""
     demo: bool = False
+    # Company profile: who the owner is in a deal and the currency the business runs in.
+    company_email: str = ""
+    role: str = "seller"
+    currency: str = "USD"
+    approved_plans: list = field(default_factory=list)  # newest first; see server.notify
 
     def to_json(self) -> dict:
         return {"email": self.email, "username": self.username, "name": self.name,
                 "business": self.business, "verified": True, "demo": self.demo,
+                "company_email": self.company_email, "role": self.role, "currency": self.currency,
                 "member_since": time.strftime("%d %b %Y", time.localtime(self.created))}
 
 
@@ -183,7 +194,8 @@ class AuthStore:
             n = secrets.token_hex(3)
             salt = secrets.token_bytes(16)
             u = User(f"demo-{n}@solvorder.example", f"demo_{n}", "Demo owner", salt,
-                     _hash_pw(secrets.token_urlsafe(16), salt), business="Acme Trading Co.", demo=True)
+                     _hash_pw(secrets.token_urlsafe(16), salt), business="Acme Trading Co.", demo=True,
+                     company_email="finance@acmetrading.example")
             self.users[u.email] = u
             return self._token(u.email), u
 
@@ -202,12 +214,30 @@ class AuthStore:
         with self._lock:
             self.tokens.pop(token, None)
 
-    def update_profile(self, token: str, name: str, business: str) -> User:
+    def update_profile(self, token: str, name: str, business: str, company_email: str | None = None,
+                       role: str | None = None, currency: str | None = None) -> User:
+        """Name and company profile. None keeps the current value of a company field."""
         u = self.user_for(token)
         if not 1 <= len(name.strip()) <= 80 or len(business) > 80:
             raise AuthError("Enter a name (and a business name up to 80 characters).")
+        company_email = (company_email if company_email is not None else u.company_email).strip().lower()
+        if company_email and (not EMAIL_RE.match(company_email) or len(company_email) > 120):
+            raise AuthError("Enter a valid company email address (or leave it empty).")
+        role = role if role is not None else u.role
+        if role not in ROLES:
+            raise AuthError("Role must be seller or buyer.")
+        currency = (currency if currency is not None else u.currency).strip().upper()
+        if currency not in CURRENCIES:
+            raise AuthError(f"Choose one of: {', '.join(CURRENCIES)}.")
         u.name, u.business = name.strip(), business.strip()
+        u.company_email, u.role, u.currency = company_email, role, currency
         return u
+
+    def add_approved(self, token: str, record: dict) -> None:
+        u = self.user_for(token)
+        with self._lock:
+            u.approved_plans.insert(0, record)
+            del u.approved_plans[MAX_APPROVED:]
 
     def change_password(self, token: str, old: str, new: str) -> None:
         u = self.user_for(token)

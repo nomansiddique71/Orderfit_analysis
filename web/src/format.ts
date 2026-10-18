@@ -1,11 +1,20 @@
 import type { Plan } from "./api";
 
-// INR uses lakh grouping (5,00,000); everything else western grouping.
+// The currencies a business can pick on its profile (auth.CURRENCIES).
+export const CURRENCIES: { code: string; symbol: string; name: string }[] = [
+  { code: "BDT", symbol: "৳", name: "Bangladeshi taka" },
+  { code: "INR", symbol: "₹", name: "Indian rupee" },
+  { code: "USD", symbol: "$", name: "US dollar" },
+  { code: "GBP", symbol: "£", name: "British pound" },
+  { code: "EUR", symbol: "€", name: "Euro" },
+];
+
+// INR and BDT use lakh grouping (5,00,000); everything else western grouping.
 export function money(n: number | null | undefined, currency = "USD", opts: { sign?: boolean } = {}) {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
-  const locale = currency === "INR" ? "en-IN" : "en-US";
+  const locale = currency === "INR" || currency === "BDT" ? "en-IN" : "en-US";
   const s = new Intl.NumberFormat(locale, { maximumFractionDigits: Math.abs(n) % 1 ? 2 : 0 }).format(Math.abs(n));
-  const sym = currency === "USD" ? "$" : currency === "INR" ? "₹" : `${currency} `;
+  const sym = CURRENCIES.find((c) => c.code === currency)?.symbol ?? `${currency} `;
   const sign = n < 0 ? "−" : opts.sign && n > 0 ? "+" : "";
   return `${sign}${sym}${s}`;
 }

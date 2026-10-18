@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { ClipboardList, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { post, type DocView, type Need, type NeedsView, type Profile } from "../api";
+import { CURRENCIES } from "../format";
 import { Callout, LoadingButton, Pill, Spinner } from "./ui";
 
 type Row = Record<string, string>;
-const CURRENCIES = ["USD", "INR", "BDT", "EUR", "GBP", "SGD", "AED"];
 const ORDER_KEYS = new Set(["order_value", "delivery_day", "payment_terms_days", "advance_received"]);
 const LISTS: Record<string, { cols: [string, string, string][]; blank: Row }> = {
   recurring: { cols: [["label", "What", "Payroll"], ["amount", "Amount each time", "7000"], ["days", "Due on days", "15, 45"]], blank: { label: "", amount: "", days: "" } },
@@ -109,7 +109,7 @@ export function NeedsModal({ edits, onClose, onSaved }: {
     }
     if (n.widget === "currency") {
       return <select className="input" value={scalars.currency || "USD"} onChange={(e) => setScalars({ ...scalars, currency: e.target.value })}>
-        {CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select>;
+        {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.symbol} {c.code}</option>)}</select>;
     }
     return <input className="input" value={scalars[n.key] ?? ""} inputMode={n.widget === "text" ? undefined : "decimal"}
       placeholder={n.widget === "day" ? "e.g. 30" : n.widget === "amount" ? (n.key === "advance_received" ? "0 if none" : "e.g. 30000") : ""}

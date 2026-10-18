@@ -162,8 +162,15 @@ function remember(path: string, body: Record<string, unknown>) {
   else if (path === "/api/profile") lastProfile = body;
 }
 
+// The login token rides along so the server knows whose company profile (role,
+// currency) applies to the case; the analysis itself stays session-based.
+function authHeader(): Record<string, string> {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 function jsonPost(path: string, sid: string, body: Record<string, unknown>) {
-  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sid, ...body }) });
+  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify({ session_id: sid, ...body }) });
 }
 
 function uploadPost(sid: string, files: File[], pasted: string) {
@@ -171,7 +178,7 @@ function uploadPost(sid: string, files: File[], pasted: string) {
   fd.append("session_id", sid);
   files.forEach((f) => fd.append("files", f));
   if (pasted.trim()) fd.append("pasted", pasted);
-  return fetch("/api/documents/upload", { method: "POST", body: fd });
+  return fetch("/api/documents/upload", { method: "POST", body: fd, headers: authHeader() });
 }
 
 async function replay(sid: string) {
@@ -218,7 +225,11 @@ export async function upload(files: File[], pasted: string): Promise<DocView> {
 export const logUrl = async () => `/api/log/export?session_id=${encodeURIComponent(await session())}`;
 
 // ---- demo login (auth.py). The token lives in localStorage so a reload keeps you signed in.
-export interface User { email: string; username: string; name: string; business: string; verified: boolean; demo: boolean; member_since: string }
+export type Role = "seller" | "buyer";
+export interface User {
+  email: string; username: string; name: string; business: string; verified: boolean; demo: boolean; member_since: string;
+  company_email: string; role: Role; currency: string;
+}
 export interface DemoMail { to: string; subject: string; body: string; time: string; note: string }
 const TOKEN_KEY = "solvorder.token";
 

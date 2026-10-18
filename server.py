@@ -90,6 +90,7 @@ class Session:
     bank_approval: str = ""  # approval id behind the current simulated ledger
     last: dict = field(default_factory=dict)  # run, case, pay_day, versions
     ai_cache: dict = field(default_factory=dict)
+    account: str = ""  # email of the logged-in owner who loaded the case ("" = anonymous API use)
 
     @property
     def gate(self) -> PermissionGate:
@@ -304,14 +305,46 @@ def _default_profile() -> case_builder.BusinessProfile:
     return case_builder.profile_from_json(json.loads((SAMPLES / "clean" / "profile.json").read_text()))
 
 
+def _owner(authorization: str | None) -> "auth.User | None":
+    """The logged-in owner behind a request, or None (the analysis API also works
+    without a login, e.g. in tests and scripts)."""
+    if not authorization:
+        return None
+    try:
+        return AUTH.user_for(_bearer(authorization))
+    except auth.AuthError:
+        return None
+
+
+def _account(s: Session) -> "auth.User | None":
+    return AUTH.users.get(s.account) if s.account else None
+
+
+def _attach(s: Session, authorization: str | None) -> None:
+    u = _owner(authorization)
+    if u is not None:
+        s.account = u.email
+
+
+def _currency(s: Session, fallback: str = "USD") -> str:
+    """The owner's own currency from the company profile. A sample keeps the
+    currency its documents are written in."""
+    u = _account(s)
+    return u.currency if u and s.profile_source != "sample" else fallback
+
+
 def _set_profile(s: Session, sample_profile) -> None:
     """A sample brings its own business. Otherwise keep business facts the owner
     already gave in this session; if none, the example business is only a
     placeholder until the owner fills the business form (analysis waits)."""
+    from dataclasses import replace
+
     if sample_profile is not None:
         s.profile, s.profile_source = sample_profile, "sample"
     elif s.profile_source not in ("owner", "example"):
         s.profile, s.profile_source = _default_profile(), "default"
+    if s.profile_source != "sample" and s.profile is not None:
+        s.profile = replace(s.profile, currency=_currency(s, s.profile.currency))
 
 
 def _ingest(s: Session, docs: list, profile, sample_id: str | None) -> dict:
@@ -347,8 +380,9 @@ class SampleReq(BaseModel):
 
 
 @app.post("/api/documents/sample")
-def load_sample(req: SampleReq):
+def load_sample(req: SampleReq, authorization: str | None = Header(default=None)):
     s = _session(req.session_id)
+    _attach(s, authorization)
     meta = next((p for p in _packs() if p["id"] == req.pack), None)
     if meta is None:
         raise HTTPException(404, "Unknown sample")
@@ -360,8 +394,10 @@ def load_sample(req: SampleReq):
 
 @app.post("/api/documents/upload")
 async def upload(session_id: str = Form(...), files: list[UploadFile] = File(default=[]),
-                 pasted: str = Form(default=""), pasted_title: str = Form(default="Pasted text")):
+                 pasted: str = Form(default=""), pasted_title: str = Form(default="Pasted text"),
+                 authorization: str | None = Header(default=None)):
     s = _session(session_id)
+    _attach(s, authorization)
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"Upload at most {MAX_FILES} files at a time.")
     docs = []
@@ -387,9 +423,10 @@ class ManualReq(BaseModel):
 
 
 @app.post("/api/documents/manual")
-def manual(req: ManualReq):
+def manual(req: ManualReq, authorization: str | None = Header(default=None)):
     """X-05: AI unavailable or no documents -- the owner types the facts."""
     s = _session(req.session_id)
+    _attach(s, authorization)
     f = Facts()
     for k, v in req.facts.items():
         if k in Facts.SCALAR_FIELDS and str(v).strip():
@@ -439,6 +476,14 @@ def companies(req: SessionReq):
             "mode": g["mode"], "note": g["note"], "sources": g.get("sources", [])}
 
 
+def _profile_known(s: Session) -> frozenset[str]:
+    """Intake keys the owner's company profile already answers."""
+    u = _account(s)
+    if u is None:
+        return frozenset()
+    return frozenset({"currency"} | ({"business_name"} if u.business.strip() else set()))
+
+
 BUSINESS_MISSING = "Your business details (cash today, reserve, regular payments)"
 
 
@@ -455,9 +500,10 @@ def what_else(req: NeedsReq):
     if s.facts is None:
         raise HTTPException(400, "Load a sample or upload documents first.")
     edits = {k: str(v)[:200] for k, v in req.edits.items() if k in Facts.SCALAR_FIELDS}
-    rules = needs.rule_needs(s.facts, edits, s.profile_source)
+    known = _profile_known(s)
+    rules = needs.rule_needs(s.facts, edits, s.profile_source, known)
     ck = ("needs", hashlib.sha256(json.dumps(
-        [{k: f.value for k, f in s.facts.scalars().items()}, edits, s.profile_source,
+        [{k: f.value for k, f in s.facts.scalars().items()}, edits, s.profile_source, sorted(known),
          [d.doc_id + d.text[:2000] for d in s.docs]], sort_keys=True).encode()).hexdigest())
     if ck not in s.ai_cache:
         mode, note, picked = "rules", "Gemini is not configured: standard checklist.", []
@@ -475,7 +521,7 @@ def what_else(req: NeedsReq):
                 mode, note = "gemini", f"Chosen by {gemini_client.backend_label()} for this order."
             except Exception as exc:  # degrade to the checklist, never block
                 note = f"Gemini could not choose the questions ({exc}); standard checklist used."
-        s.ai_cache[ck] = (needs.merge(rules, picked), mode, note)
+        s.ai_cache[ck] = (needs.merge(rules, picked, known), mode, note)
         s.log.append("gemini.what_else_needed", "T1", {"keys": len(picked)}, None, f"source: {mode}")
     items, mode, note = s.ai_cache[ck]
     return {"needs": [n.to_json() for n in items], "mode": mode, "note": note,
@@ -522,7 +568,10 @@ def set_profile(req: ProfileReq):
     """The owner's business facts (answers to the intake questions)."""
     s = _session(req.session_id)
     if req.use_example:
+        from dataclasses import replace
+
         s.profile, s.profile_source = s.profile or _default_profile(), "example"
+        s.profile = replace(s.profile, currency=_currency(s, s.profile.currency))
         s.log.append("set_profile", "T1", {"example": True}, None, "owner chose the example business")
         return _documents_view(s)
     if req.opening_cash is None or req.reserve is None:
@@ -545,7 +594,8 @@ def set_profile(req: ProfileReq):
               for i, o in enumerate(req.offers, 1)]
     try:
         s.profile = case_builder.profile_from_json({
-            "name": req.name.strip() or "My business", "currency": req.currency.strip().upper() or "USD",
+            "name": req.name.strip() or (_account(s).business if _account(s) else "") or "My business",
+            "currency": _currency(s, req.currency.strip().upper() or "USD"),
             "opening_cash": str(req.opening_cash), "reserve": str(req.reserve),
             "max_financing_cost": str(req.max_financing_cost),
             "obligations": sorted(obligations, key=lambda o: o["day"]), "offers": offers})
@@ -1089,6 +1139,9 @@ class EmailReq(BaseModel):
 class ProfileUpdateReq(BaseModel):
     name: str = Field(max_length=80)
     business: str = Field(default="", max_length=80)
+    company_email: str | None = Field(default=None, max_length=120)
+    role: str | None = Field(default=None, max_length=10)
+    currency: str | None = Field(default=None, max_length=5)
 
 
 class PasswordReq(BaseModel):
@@ -1140,7 +1193,7 @@ def logout(authorization: str | None = Header(default=None)):
 @app.post("/api/auth/profile")
 def update_profile(req: ProfileUpdateReq, authorization: str | None = Header(default=None)):
     return {"user": _auth_call(AUTH.update_profile, _bearer(authorization), req.name,
-                               req.business).to_json()}
+                               req.business, req.company_email, req.role, req.currency).to_json()}
 
 
 @app.post("/api/auth/password")
