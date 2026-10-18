@@ -47,18 +47,18 @@ export function CompanyCheck({ refreshKey, buyer = false }: { refreshKey: string
       <SectionTitle icon={<Search className="h-5 w-5" />} title="Who are you dealing with?"
         sub="Company names and email addresses from the documents. Rules check the emails; Gemini can also look the companies up on Google." />
       {!v && !err && <Spinner text="Checking the companies (Gemini may be searching Google)…" />}
-      {err && <p className="text-sm text-rose-700">{err}</p>}
+      {err && <p className="text-sm text-rose-700" role="alert">Couldn't check the companies: {err}</p>}
       {v && v.parties.length === 0 && <p className="text-sm text-slate-500">No company names or emails were found in the documents. Add them on this screen to have them checked.</p>}
       {v && v.parties.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
           {v.parties.map((p) => (
-            <div key={p.role} className="rounded-xl border border-slate-200 p-4">
+            <div key={p.role} className="rounded-lg border border-slate-200 p-4">
               <div className="label">{p.role === "supplier" ? "Supplier (you pay them)" : buyer ? "Buyer (this is you)" : "Customer (they pay you)"}</div>
-              <div className="font-bold text-slate-900">{p.company || "Name not found"}</div>
-              <div className="font-mono text-xs text-slate-500">{p.email || "no email found"}</div>
+              <div className="mt-0.5 font-semibold text-slate-900">{p.company || "Name not found"}</div>
+              <div className="font-mono text-xs text-slate-500">{p.email || "No email found"}</div>
               <ul className="mt-2 space-y-1">{p.rules.map((r, i) => <li key={i} className="flex gap-2 text-sm">{ICON[r.kind]}{r.text}</li>)}</ul>
               <div className="mt-3 border-t border-slate-100 pt-3">
-                {p.google ? <GoogleVerdict g={p.google} /> : <p className="text-xs text-slate-500">{v.mode === "on" ? "Gemini returned no result for this company." : "Google check not run."}</p>}
+                {p.google ? <GoogleVerdict g={p.google} /> : <p className="text-xs text-slate-500">{v.mode === "on" ? "Gemini found nothing about this company." : "Not looked up on Google."}</p>}
               </div>
             </div>
           ))}

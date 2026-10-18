@@ -1,33 +1,163 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/public-sans";
+@import "@fontsource-variable/public-sans/wght-italic.css";
+@import "@fontsource-variable/source-serif-4/opsz.css";
 
+/*
+ * SolvOrder design tokens.
+ * A ledger-and-paper palette: warm paper neutrals, one deep "ledger green" for actions
+ * and good news, brick red for danger, ochre for "check this", ink blue for information.
+ * The Tailwind colour names already used across the app (slate, brand, emerald, rose,
+ * amber, sky, violet, teal) are redefined here so every screen shares this palette.
+ */
 @theme {
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --color-ink-950: #07111f;
-  --color-ink-900: #0b1a2e;
-  --color-ink-800: #12263f;
-  --color-ink-700: #1c3553;
-  --color-brand-50: #ecfdf8;
-  --color-brand-100: #d1faee;
-  --color-brand-500: #14b8a6;
-  --color-brand-600: #0d9488;
-  --color-brand-700: #0f766e;
+  --font-sans: "Public Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Source Serif 4 Variable", ui-serif, Georgia, "Times New Roman", serif;
+
+  /* Paper neutrals (warm, slightly yellow) */
+  --color-slate-50: #f8f7f3;
+  --color-slate-100: #f0eee7;
+  --color-slate-200: #e2dfd5;
+  --color-slate-300: #cdc8bb;
+  --color-slate-400: #9d988b;
+  --color-slate-500: #6c685e;
+  --color-slate-600: #545149;
+  --color-slate-700: #3e3c36;
+  --color-slate-800: #2a2925;
+  --color-slate-900: #1c1b18;
+  --color-slate-950: #12110f;
+
+  /* Dark surfaces (toasts, overlays): green-black */
+  --color-ink-950: #0f1a15;
+  --color-ink-900: #14231c;
+  --color-ink-800: #1b2e25;
+  --color-ink-700: #253d32;
+
+  /* Ledger green: primary actions, selected states, "safe" */
+  --color-brand-50: #eef5f0;
+  --color-brand-100: #d8e8dd;
+  --color-brand-200: #b3d1bd;
+  --color-brand-300: #86b597;
+  --color-brand-400: #519271;
+  --color-brand-500: #2e7a57;
+  --color-brand-600: #1f6647;
+  --color-brand-700: #18533a;
+  --color-brand-800: #13412e;
+  --color-brand-900: #0f3325;
+
+  --color-teal-50: var(--color-brand-50);
+  --color-teal-100: var(--color-brand-100);
+  --color-teal-200: var(--color-brand-200);
+  --color-teal-300: var(--color-brand-300);
+  --color-teal-500: var(--color-brand-500);
+  --color-teal-600: var(--color-brand-600);
+  --color-teal-700: var(--color-brand-700);
+
+  /* Success shares the ledger green family */
+  --color-emerald-50: #eff6f1;
+  --color-emerald-100: #d9ebdf;
+  --color-emerald-200: #b6d7c1;
+  --color-emerald-300: #8cbf9e;
+  --color-emerald-400: #5aa078;
+  --color-emerald-500: #2f8159;
+  --color-emerald-600: #236c4a;
+  --color-emerald-700: #1b583c;
+  --color-emerald-800: #154630;
+  --color-emerald-900: #103626;
+
+  /* Brick red: blocks, breaches, failures */
+  --color-rose-50: #fbf2ef;
+  --color-rose-100: #f6ded8;
+  --color-rose-200: #ecbdb3;
+  --color-rose-300: #de9586;
+  --color-rose-400: #cf6f5c;
+  --color-rose-500: #bd503b;
+  --color-rose-600: #a33d2a;
+  --color-rose-700: #873122;
+  --color-rose-800: #6c271b;
+  --color-rose-900: #541f15;
+
+  /* Ochre: needs your check */
+  --color-amber-50: #fbf6ea;
+  --color-amber-100: #f5e8c8;
+  --color-amber-200: #ead296;
+  --color-amber-300: #ddb860;
+  --color-amber-400: #cf9f35;
+  --color-amber-500: #b9861d;
+  --color-amber-600: #9a6c12;
+  --color-amber-700: #7a540e;
+  --color-amber-800: #61430c;
+  --color-amber-900: #4b340a;
+
+  /* Ink blue: information, "from the document" */
+  --color-sky-50: #f0f4f8;
+  --color-sky-100: #dde6ef;
+  --color-sky-200: #bccddd;
+  --color-sky-300: #93aec6;
+  --color-sky-500: #4f7598;
+  --color-sky-600: #3d6386;
+  --color-sky-700: #31516f;
+  --color-sky-800: #284259;
+  --color-sky-900: #1f3346;
+
+  /* Plum: the sandbox (pretend bank, outbox, lender) */
+  --color-violet-50: #f6f2f5;
+  --color-violet-100: #ece2ea;
+  --color-violet-200: #d8c5d5;
+  --color-violet-300: #bfa1bb;
+  --color-violet-500: #85607f;
+  --color-violet-600: #704e6b;
+  --color-violet-700: #5c3f58;
+  --color-violet-800: #483245;
+  --color-violet-900: #382735;
+
+  /* Quieter corners and shadows than the library defaults */
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.625rem;
+  --radius-3xl: 0.875rem;
+  --shadow-sm: 0 1px 0 rgb(28 27 24 / 0.04);
+  --shadow-md: 0 2px 6px -2px rgb(28 27 24 / 0.10);
+  --shadow-lg: 0 6px 16px -6px rgb(28 27 24 / 0.14);
+  --shadow-xl: 0 12px 28px -10px rgb(28 27 24 / 0.18);
+  --shadow-2xl: 0 22px 48px -16px rgb(28 27 24 / 0.28);
 }
 
 html, body, #root { height: 100%; }
-body { @apply bg-slate-50 text-slate-800 antialiased; }
+body {
+  @apply bg-slate-100 text-slate-800 antialiased;
+  font-feature-settings: "tnum" 1, "lnum" 1; /* aligned figures everywhere: this app is mostly money */
+}
+h1, h2, h3, .font-display { font-family: var(--font-serif); font-optical-sizing: auto; letter-spacing: -0.01em; }
+::selection { background: var(--color-brand-100); }
 
-@utility card { @apply rounded-2xl border border-slate-200 bg-white shadow-sm; }
-@utility label { @apply text-xs font-semibold uppercase tracking-wide text-slate-500; }
-@utility input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100; }
+/* Visible keyboard focus on every control */
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@utility card { @apply rounded-2xl border border-slate-200 bg-white; }
+/* Field and section labels: sentence case, never transformed (labels keep the casing they are written in). */
+@utility label { @apply text-[13px] font-semibold text-slate-600; }
+@utility input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-slate-500; }
 @utility btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50; }
-@utility btn-primary { @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700; }
-@utility btn-secondary { @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50; }
+@utility btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800; }
+@utility btn-secondary { @apply btn border border-slate-300 bg-white text-slate-800 hover:border-slate-400 hover:bg-slate-50; }
+@utility btn-quiet { @apply btn px-2 text-brand-700 hover:bg-brand-50; }
 @utility btn-danger { @apply btn bg-rose-600 text-white hover:bg-rose-700; }
 @utility chip { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
-.scroll-thin::-webkit-scrollbar { width: 6px; }
-.scroll-thin::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 9px; }
+@utility link { @apply font-semibold text-brand-700 underline decoration-brand-200 underline-offset-2 hover:decoration-brand-600; }
+
+.scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: rgba(108,104,94,.30); border-radius: 9px; }
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
 
 @keyframes progress-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
 .progress-indeterminate { animation: progress-slide 1.2s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .progress-indeterminate { animation-duration: 3s; } }
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate { animation-duration: 3s; }
+  html { scroll-behavior: auto !important; }
+}

@@ -1,171 +1,123 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { BellRing, RotateCcw } from "lucide-react";
-import { ApiError, authPost, forgetCase, get, me, post, resetSession, setToken, type Analysis, type DocView, type User } from "./api";
+import { useEffect, useState } from "react";
+import { BellRing, Menu, RotateCcw, X } from "lucide-react";
 import { AuthScreen, ProfileModal } from "./components/Auth";
 import { ActStep, DeclineStep } from "./components/ActStep";
 import { ApprovedPlans } from "./components/ApprovedPlans";
-import { FactsStep, type FactState } from "./components/FactsStep";
+import { FactsStep } from "./components/FactsStep";
 import { HowItWorks } from "./components/HowItWorks";
 import { NeedsModal } from "./components/NeedsModal";
-import { OptionsStep, type Choice } from "./components/OptionsStep";
+import { OptionsStep } from "./components/OptionsStep";
 import { RiskStep } from "./components/RiskStep";
-import { Sidebar, STEPS } from "./components/Sidebar";
+import { Logo, Sidebar, STEPS } from "./components/Sidebar";
 import { StartStep } from "./components/StartStep";
 import { Callout, Spinner, TopProgress } from "./components/ui";
+import { useCaseFlow } from "./hooks/useCaseFlow";
 
 const INTRO = [
-  "Start with the order. SolvOrder needs the purchase order and what you will pay the supplier; a quote, invoice or email helps the fraud checks.",
-  "SolvOrder has read your documents (with Google Gemini when it is available). Each value shows the exact text it came from. Fix anything wrong, confirm what is flagged, and clear any fraud alert.",
-  "Your cash, day by day, if you accept the deal as it is, plus the recommended plan.",
-  "SolvOrder tried every mix of customer advance, later supplier payment and loans, kept only plans that keep your reserve, and ranked them by what you care about.",
-  "Approve one plan and notify the other side, or, when no plan keeps your reserve, decline politely: SolvOrder writes the email to your customer (or supplier), books an approved plan in a sandbox bank and files every decision under Approved / declined plans. Nothing real is sent or paid.",
+  "Start with the order. SolvOrder needs the purchase order and what you will pay the supplier. A quote, invoice or email helps it spot fraud.",
+  "Here is what SolvOrder read from your documents, with the exact words each value came from. Fix anything wrong, confirm anything marked for checking, and deal with any fraud alert.",
+  "Your bank balance, day by day, if you accept the deal as it is, next to the plan SolvOrder recommends.",
+  "SolvOrder tried every mix of customer advance, later supplier payment and loans, kept only the plans that keep your reserve, and ranked them by what you care about.",
+  "Approve one plan and let the other side know by email, or, when no plan keeps your reserve, decline politely. Everything here is practice: nothing real is sent or paid.",
 ];
 
-const EMPTY: FactState = { edits: {}, payEdits: null, confirmed: new Set(), reserve: null, openingCash: null, maxFin: null };
-
 export default function App() {
-  const [step, setStep] = useState(0);
-  const [maxStep, setMaxStep] = useState(0);
-  const [ai, setAi] = useState<{ label: string; gemini: boolean } | null>(null);
-  const [view, setView] = useState<DocView | null>(null);
-  const [facts, setFacts] = useState<FactState>(EMPTY);
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [controls, setControlsState] = useState({ priority: "maximize_margin", stress: 15, payDay: null as number | null, tie: null as string | null });
-  const [reading, setReading] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [missing, setMissing] = useState<string[] | null>(null);
-  const [how, setHow] = useState(false);
-  const [needsOpen, setNeedsOpen] = useState(false);
-  const [choice, setChoice] = useState<Choice>(null);
-  const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = still checking
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [page, setPage] = useState<"flow" | "approved">("flow");
-  const [toast, setToast] = useState<string | null>(null);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 6000); return () => clearTimeout(t); }, [toast]);
-  useEffect(() => { me().then(setUser).catch(() => setUser(null)); }, []);
-  const main = useRef<HTMLDivElement>(null);
-
-  useEffect(() => { get<{ ai: string; gemini: boolean }>("/api/health").then((h) => setAi({ label: h.ai, gemini: h.gemini })).catch(() => setAi(null)); }, []);
-
-  const go = (i: number) => { setPage("flow"); setStep(i); setMaxStep((m) => Math.max(m, i)); main.current?.scrollTo({ top: 0, behavior: "smooth" }); };
-  const setControls = (c: Partial<typeof controls>) => setControlsState((s) => ({ ...s, ...c }));
-
-  const restart = useCallback((msg?: string) => {
-    resetSession(); forgetCase(); setChoice(null); setView(null); setAnalysis(null); setFacts(EMPTY); setReading(null);
-    setControlsState({ priority: "maximize_margin", stress: 15, payDay: null, tie: null });
-    setStep(0); setMaxStep(0); setError(msg ?? null);
-  }, []);
-
-  const analyze = useCallback(async () => {
-    if (!view) return null;
-    const edits: Record<string, unknown> = {};
-    for (const f of view.facts) {
-      const v = facts.edits[f.key];
-      if (v !== undefined && v !== f.value) edits[f.key] = v;
-    }
-    if (facts.payEdits) edits.supplier_payments = facts.payEdits;
-    setBusy(true); setError(null);
-    try {
-      const r = await post<Analysis>("/api/analyze", {
-        edits, confirmed: [...facts.confirmed], payment_reading: reading, priority: controls.priority,
-        stress_delay: controls.stress, reserve: facts.reserve, opening_cash: facts.openingCash,
-        max_financing_cost: facts.maxFin, pay_day: controls.payDay, tie_choice: controls.tie,
-      });
-      if (!r.ok) { setMissing(r.missing ?? []); setAnalysis(null); if (r.needs_business) setNeedsOpen(true); return r; }
-      setMissing(null); setAnalysis(r);
-      return r;
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) restart("Your session expired. Please start again.");
-      else setError((e as Error).message);
-      return null;
-    } finally { setBusy(false); }
-  }, [view, facts, reading, controls, restart]);
-
-  // Re-run the engine (no AI calls) whenever an input changes after the first analysis.
+  const f = useCaseFlow();
+  const [navOpen, setNavOpen] = useState(false); // mobile menu only
   useEffect(() => {
-    if (step < 2 || !view) return;
-    const t = setTimeout(() => { analyze(); }, 250);
-    return () => clearTimeout(t);
-  }, [controls, reading, facts.confirmed]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNavOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
 
-  async function toRisk() {
-    const r = await analyze();
-    if (r && r.ok) go(2);
-  }
+  if (f.user === undefined) return <div className="grid h-full place-items-center"><Spinner text="Opening SolvOrder…" /></div>;
+  if (f.user === null) return <><TopProgress /><AuthScreen onAuthed={(a) => f.setUser(a.user)} /></>;
+  const user = f.user;
 
-  async function logout() {
-    try { await authPost("/api/auth/logout"); } catch { /* already logged out */ }
-    setToken(null); setProfileOpen(false); restart(); setUser(null);
-  }
-
-  if (user === undefined) return <div className="grid h-full place-items-center"><Spinner text="Opening SolvOrder…" /></div>;
-  if (user === null) return <><TopProgress /><AuthScreen onAuthed={(a) => setUser(a.user)} /></>;
+  const sidebar = (closeAfter: boolean) => {
+    const wrap = <A extends unknown[]>(fn: (...a: A) => unknown) => (...a: A) => { if (closeAfter) setNavOpen(false); fn(...a); };
+    return (
+      <Sidebar step={f.step} maxStep={f.maxStep} onStep={wrap(f.onStep)} ai={f.ai} onHowItWorks={wrap(() => f.setHow(true))}
+        user={user} onProfile={wrap(() => f.setProfileOpen(true))} approvedActive={f.page === "approved"} onApproved={wrap(() => f.setPage("approved"))} />
+    );
+  };
+  const approved = f.page === "approved";
 
   return (
     <div className="flex h-full">
       <TopProgress />
-      <Sidebar step={step} maxStep={maxStep} onStep={(i) => (i >= 2 && !analysis ? toRisk() : go(i))} ai={ai} onHowItWorks={() => setHow(true)}
-        user={user} onProfile={() => setProfileOpen(true)} approvedActive={page === "approved"} onApproved={() => setPage("approved")} />
-      <main ref={main} className="flex-1 overflow-y-auto">
-        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/85 px-8 py-4 backdrop-blur">
-          <div className="flex items-center justify-between gap-4">
-            {page === "approved" ? (
-              <div>
-                <div className="label text-brand-700">Your records</div>
-                <h2 className="text-xl font-extrabold text-slate-900">Approved / declined plans</h2>
-                <p className="max-w-3xl text-sm text-slate-500">Every plan you approved and every deal you declined, with the reasons, the numbers and the emails that went to your customer or supplier.</p>
-              </div>
-            ) : (
-            <div>
-              <div className="label text-brand-700">Step {step + 1} of 5</div>
-              <h2 className="text-xl font-extrabold text-slate-900">{STEPS[step].title}</h2>
-              <p className="max-w-3xl text-sm text-slate-500">{INTRO[step]}</p>
+      <div className="hidden lg:flex">{sidebar(false)}</div>
+      {navOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu">
+          <div className="absolute inset-0 bg-ink-950/40" onClick={() => setNavOpen(false)} />
+          <div className="absolute inset-y-0 left-0 flex max-w-[88vw] shadow-2xl">
+            {sidebar(true)}
+            <button className="absolute right-2 top-4 rounded-md p-1.5 text-slate-500 hover:bg-slate-200" aria-label="Close menu" onClick={() => setNavOpen(false)}><X className="h-5 w-5" /></button>
+          </div>
+        </div>
+      )}
+
+      <main ref={f.main} className="relative min-w-0 flex-1 overflow-y-auto">
+        <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 lg:hidden">
+          <button className="rounded-md p-1.5 text-slate-700 hover:bg-slate-200" aria-label="Open menu" onClick={() => setNavOpen(true)}><Menu className="h-5 w-5" /></button>
+          <Logo className="h-6 w-6" />
+          <span className="font-serif text-lg font-semibold text-slate-900">SolvOrder</span>
+        </div>
+
+        <header className="border-b border-slate-200 bg-slate-100/95 px-4 pt-6 pb-5 sm:px-8 lg:sticky lg:top-0 lg:z-10">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0">
+              {approved ? <>
+                <div className="text-[13px] font-semibold text-brand-700">Your records</div>
+                <h1 className="mt-0.5 text-[28px] font-semibold leading-tight text-slate-900">Approved / declined plans</h1>
+                <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-slate-600">Every plan you approved and every deal you declined, with the reasons, the numbers and the emails that went to your customer or supplier.</p>
+              </> : <>
+                <div className="text-[13px] font-semibold text-brand-700">Step {f.step + 1} of 5</div>
+                <h1 className="mt-0.5 text-[28px] font-semibold leading-tight text-slate-900">{STEPS[f.step].title}</h1>
+                <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-slate-600">{INTRO[f.step]}</p>
+              </>}
             </div>
-            )}
-            <div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
-              {busy && step >= 2 && <Spinner text="Updating results…" />}
-              {view && page === "flow" && <button className="btn-secondary whitespace-nowrap" disabled={busy} onClick={() => restart()}><RotateCcw className="h-4 w-4" /> New case</button>}
+            <div className="flex items-center justify-between gap-3 sm:shrink-0 sm:justify-end sm:gap-4">
+              {/* Fixed slot so the "Updating" spinner never shifts the layout */}
+              <div className="flex min-h-5 sm:min-w-[150px] sm:justify-end" aria-live="polite">{f.busy && f.step >= 2 && <Spinner text="Updating results…" />}</div>
+              {f.view && !approved && <button className="btn-secondary whitespace-nowrap" disabled={f.busy} onClick={() => f.restart()}><RotateCcw className="h-4 w-4" /> New case</button>}
             </div>
           </div>
         </header>
-        <div className="mx-auto max-w-7xl space-y-4 px-8 py-6">
-          {error && <Callout tone="critical" title="Something went wrong">{error}</Callout>}
-          {missing && <Callout tone="warning" title="SolvOrder needs a few more facts before it can calculate">
-            These were not found in the documents: <b>{missing.join(", ")}</b>. Add them in the table below (or use the manual form on the first screen). SolvOrder never guesses a number.
+
+        <div className="mx-auto max-w-6xl space-y-5 px-4 py-6 sm:px-8 sm:py-8">
+          {f.error && <Callout tone="critical" title="Something went wrong">{f.error}</Callout>}
+          {f.missing && <Callout tone="warning" title="SolvOrder needs a few more facts before it can calculate">
+            These were not found in the documents: <b>{f.missing.join(", ")}</b>. Add them in the table below (or use the form on the first screen). SolvOrder never guesses a number.
           </Callout>}
 
-          {page === "approved" && <ApprovedPlans onBack={() => setPage("flow")} />}
-          {page === "flow" && <>
-          {step === 0 && <StartStep aiOn={!!ai?.gemini} role={user.role} company={user.business} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setChoice(null); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); if (v.profile_source === "default" || v.questions > 0) setNeedsOpen(true); }} />}
-          {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} analysing={busy} onOpenNeeds={() => setNeedsOpen(true)} />}
-          {step === 2 && analysis && <RiskStep a={analysis} reading={reading} setReading={setReading} onNext={() => go(3)} updating={busy}
-            onConfirm={(k) => setFacts((f) => ({ ...f, confirmed: new Set([...f.confirmed, k]) }))} />}
-          {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} updating={busy}
-            choice={choice} onChoose={(c) => { setChoice(c); go(4); }} />}
-          {step === 4 && analysis && analysis.verdict.winner === "decline" && <DeclineStep key={analysis.plans[0]?.version} a={analysis} onSent={setToast} onOpenApproved={() => setPage("approved")} />}
-          {step === 4 && analysis && analysis.verdict.winner !== "decline" && <ActStep key={analysis.verdict.winner + analysis.plans[0]?.version + (choice?.id ?? "")} a={analysis} choice={choice}
-            refresh={async () => { await analyze(); }} onSent={setToast} onOpenApproved={() => setPage("approved")} />}
-          {step >= 2 && !analysis && !busy && <Callout tone="info">Go back to <b>Check the facts</b> and press <b>Analyse my cash</b>.</Callout>}
+          {approved && <ApprovedPlans onBack={() => f.setPage("flow")} />}
+          {!approved && <>
+          {f.step === 0 && <StartStep aiOn={!!f.ai?.gemini} role={user.role} company={user.business} onHowItWorks={() => f.setHow(true)} onLoaded={f.onLoaded} />}
+          {f.step === 1 && f.view && <FactsStep view={f.view} setView={f.setView} state={f.facts} setState={f.setFacts} onNext={f.toRisk} analysing={f.busy} onOpenNeeds={() => f.setNeedsOpen(true)} />}
+          {f.step === 2 && f.analysis && <RiskStep a={f.analysis} reading={f.reading} setReading={f.setReading} onNext={() => f.go(3)} updating={f.busy} onConfirm={f.confirmFact} />}
+          {f.step === 3 && f.analysis && <OptionsStep a={f.analysis} controls={f.controls} setControls={f.setControls} onNext={() => f.go(4)} updating={f.busy}
+            choice={f.choice} onChoose={f.chooseOption} />}
+          {f.step === 4 && f.analysis && f.analysis.verdict.winner === "decline" && <DeclineStep key={f.analysis.plans[0]?.version} a={f.analysis} onSent={f.setToast} onOpenApproved={() => f.setPage("approved")} />}
+          {f.step === 4 && f.analysis && f.analysis.verdict.winner !== "decline" && <ActStep key={f.analysis.verdict.winner + f.analysis.plans[0]?.version + (f.choice?.id ?? "")} a={f.analysis} choice={f.choice}
+            refresh={async () => { await f.analyze(); }} onSent={f.setToast} onOpenApproved={() => f.setPage("approved")} />}
+          {f.step >= 2 && !f.analysis && !f.busy && <Callout tone="info">Go back to <b>Check the facts</b> and press <b>Analyse my cash</b>.</Callout>}
           </>}
         </div>
       </main>
-      {toast && (
-        <div role="status" className="fixed bottom-6 right-6 z-50 flex max-w-md items-start gap-3 rounded-2xl bg-ink-950 px-5 py-4 text-sm text-white shadow-2xl">
-          <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-brand-500" />
-          <div className="flex-1">{toast}</div>
-          <button className="text-slate-400 hover:text-white" aria-label="Dismiss" onClick={() => setToast(null)}>✕</button>
+
+      {f.toast && (
+        <div role="status" className="fixed inset-x-4 bottom-4 z-50 flex items-start gap-3 rounded-xl bg-ink-900 px-5 py-4 text-sm text-white shadow-2xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:max-w-md">
+          <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-brand-300" />
+          <div className="flex-1">{f.toast}</div>
+          <button className="text-slate-300 hover:text-white" aria-label="Dismiss" onClick={() => f.setToast(null)}><X className="h-4 w-4" /></button>
         </div>
       )}
-      {how && <HowItWorks onClose={() => setHow(false)} />}
-      {profileOpen && <ProfileModal user={user} onClose={() => setProfileOpen(false)} onUser={setUser} onLogout={logout} />}
-      {needsOpen && view && <NeedsModal edits={facts.edits} role={view.role} onClose={() => setNeedsOpen(false)}
-        onView={(v) => { setView(v); setAnalysis(null); setMaxStep(1); }}
-        onSaved={(v, answers) => {
-          if (v) setView(v);
-          setFacts((f) => ({ ...f, edits: { ...f.edits, ...answers }, ...(v ? { reserve: null, openingCash: null, maxFin: null } : {}) }));
-          setMissing(null); setNeedsOpen(false);
-        }} />}
+      {f.how && <HowItWorks onClose={() => f.setHow(false)} />}
+      {f.profileOpen && <ProfileModal user={user} onClose={() => f.setProfileOpen(false)} onUser={f.setUser} onLogout={f.logout} />}
+      {f.needsOpen && f.view && <NeedsModal edits={f.facts.edits} role={f.view.role} onClose={() => f.setNeedsOpen(false)}
+        onView={f.onNeedsView} onSaved={f.onNeedsSaved} />}
     </div>
   );
 }

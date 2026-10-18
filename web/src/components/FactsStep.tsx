@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ArrowRight, BadgeCheck, Building2, ClipboardList, Eye, FileText, Landmark, PhoneCall, ShieldAlert, TriangleAlert } from "lucide-react";
+import { ArrowRight, BadgeCheck, Building2, ClipboardList, Eye, FileText, Landmark, PhoneCall, Plus, ShieldAlert, TriangleAlert } from "lucide-react";
 import { post, type DocView, type Fact, type Flag, type Original } from "../api";
 import { money } from "../format";
-import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle } from "./ui";
+import { BusyOverlay, Callout, Card, LoadingButton, NextBar, Pill, SectionTitle } from "./ui";
 import { CompanyCheck } from "./CompanyCheck";
 
 export interface FactState {
@@ -15,9 +15,9 @@ export interface FactState {
 }
 
 const MODE_TEXT: Record<string, string> = {
-  gemini: "Read by Google Gemini. Every quoted span was checked against the document text.",
-  "gemini-pdf": "Read by Google Gemini, including scanned PDFs (those values need your confirmation).",
-  parser: "Read by the built-in parser (Gemini unavailable). Please check every value.",
+  gemini: "Read by Google Gemini. Every value was checked against the exact words in your document.",
+  "gemini-pdf": "Read by Google Gemini, including scanned PDFs. Values from scans need you to confirm them.",
+  parser: "Read by SolvOrder's built-in reader because Gemini wasn't available. Please check every value.",
   manual: "Entered by you. No AI was used.",
 };
 
@@ -47,8 +47,8 @@ export function FlagCard({ flag, onResolve }: { flag: Flag; onResolve?: (code: s
       </span>}
       action={onResolve && flag.options.length > 0 ? (
         open ? (
-          <div className="space-y-2 rounded-xl bg-white/70 p-3">
-            <div className="text-xs font-semibold text-slate-600">What do you want to do? SolvOrder suggests these options; you choose.</div>
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-semibold text-slate-600">What would you like to do? SolvOrder suggests these; the choice is yours.</div>
             {flag.options.map((o) => (
               <label key={o.id} className="flex cursor-pointer items-start gap-2 text-sm text-slate-800">
                 <input type="radio" name={`opt-${flag.code}`} className="mt-1 accent-teal-600" checked={choice === o.id} onChange={() => setChoice(o.id)} />
@@ -56,7 +56,7 @@ export function FlagCard({ flag, onResolve }: { flag: Flag; onResolve?: (code: s
               </label>
             ))}
             <input className="input" value={note} maxLength={300} onChange={(e) => setNote(e.target.value)}
-              placeholder={opt?.needs_note ? "Required: how did you check? e.g. called Brightwave on our saved number" : "Optional note for the log"} />
+              aria-label="Note" placeholder={opt?.needs_note ? "Required: how did you check? e.g. called Brightwave on our saved number" : "Optional note for the log"} />
             <div className="flex gap-2">
               <LoadingButton className={flag.blocks_execution ? "btn-danger" : "btn-primary"} loading={saving} loadingText="Recording…" disabled={!canSave}
                 onClick={async () => { setSaving(true); try { await onResolve(flag.code, choice, note); setOpen(false); } finally { setSaving(false); } }}>Save my choice</LoadingButton>
@@ -85,8 +85,8 @@ function SourceQuote({ f, docs }: { f: Fact; docs: DocView["documents"] }) {
 function Status({ f }: { f: Fact }) {
   if (f.source === "OWNER") return <Pill tone="blue">Entered by you</Pill>;
   if (!f.value) return <Pill tone="slate">Not in the documents</Pill>;
-  if (f.verified && f.confidence >= 0.7) return <Pill tone="green"><BadgeCheck className="h-3 w-3" /> Verified · {Math.round(f.confidence * 100)}%</Pill>;
-  return <Pill tone="amber"><TriangleAlert className="h-3 w-3" /> Needs your check · {Math.round(f.confidence * 100)}%</Pill>;
+  if (f.verified && f.confidence >= 0.7) return <Pill tone="green"><BadgeCheck className="h-3 w-3" /> Matches the document · {Math.round(f.confidence * 100)}% sure</Pill>;
+  return <Pill tone="amber"><TriangleAlert className="h-3 w-3" /> Needs your check · {Math.round(f.confidence * 100)}% sure</Pill>;
 }
 
 const PROFILE_SOURCE: Record<string, [string, "blue" | "green" | "amber" | "slate"]> = {
@@ -97,7 +97,7 @@ const PROFILE_SOURCE: Record<string, [string, "blue" | "green" | "amber" | "slat
 /** The value in the owner's currency, with what the document actually wrote. */
 function OriginalLine({ o }: { o: Original }) {
   return (
-    <div className="mt-1 rounded-lg bg-sky-50 px-2 py-1 text-xs text-sky-900">
+    <div className="mt-1.5 rounded-md bg-sky-50 px-2 py-1 text-xs text-sky-900">
       {o.converted !== null
         ? <><b>{money(o.converted, o.to)}</b> in your currency · </>
         : <><b>Exchange rate needed</b> · </>}
@@ -120,10 +120,10 @@ function FxCard({ view, setView }: { view: DocView; setView: (v: DocView) => voi
   return (
     <Card className="p-6">
       <SectionTitle icon={<Landmark className="h-5 w-5" />} title={`Amounts converted to ${view.fx.to}`}
-        sub="Your documents use another currency. Every page shows your profile currency; the document's own amount stays visible next to each value. Gemini only finds the rate: the conversion is exact arithmetic." />
+        sub="Your documents use another currency. SolvOrder shows every amount in your own currency, with the document's original amount next to it. Gemini only finds the rate; the conversion itself is exact arithmetic." />
       <div className="space-y-3">
         {view.fx.rates.map((r) => (
-          <div key={r.currency} className={`rounded-xl border p-4 ${!r.rate || r.suspicious ? "border-amber-300 bg-amber-50/50" : "border-slate-200"}`}>
+          <div key={r.currency} className={`rounded-lg border p-4 ${!r.rate || r.suspicious ? "border-amber-300 bg-amber-50/60" : "border-slate-200"}`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-base font-bold text-slate-900">{r.rate ? `1 ${r.currency} = ${r.rate.replace(/\.?0+$/, "")} ${r.to}` : `1 ${r.currency} = ? ${r.to}`}</span>
               <Pill tone={r.mode === "gemini" ? "green" : r.mode === "owner" ? "blue" : "amber"}>{r.mode === "gemini" ? "Gemini · Google Search" : r.mode === "owner" ? "Entered by you" : "Rate needed"}</Pill>
@@ -132,7 +132,7 @@ function FxCard({ view, setView }: { view: DocView; setView: (v: DocView) => voi
             {r.sources.length > 0 && <div className="mt-1 flex flex-wrap gap-2 text-xs">{r.sources.map((s) => <a key={s.uri} href={s.uri} target="_blank" rel="noreferrer" className="text-brand-700 underline">{s.title}</a>)}</div>}
             {r.note && <div className="mt-1 text-xs font-semibold text-amber-800">{r.note}</div>}
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <input className="input w-40" inputMode="decimal" placeholder={`${r.to} per ${r.currency}`} value={edit[r.currency] ?? ""} onChange={(e) => setEdit({ ...edit, [r.currency]: e.target.value })} />
+              <input className="input w-40" aria-label={`Rate: ${r.to} per ${r.currency}`} inputMode="decimal" placeholder={`${r.to} per ${r.currency}`} value={edit[r.currency] ?? ""} onChange={(e) => setEdit({ ...edit, [r.currency]: e.target.value })} />
               <LoadingButton className="btn-secondary" loading={busy === r.currency} loadingText="Saving…" disabled={!edit[r.currency] || !!busy}
                 onClick={() => run(r.currency, "/api/fx", { rates: { [r.currency]: edit[r.currency] } })}>{r.rate ? "Correct the rate" : "Use this rate"}</LoadingButton>
             </div>
@@ -141,12 +141,12 @@ function FxCard({ view, setView }: { view: DocView; setView: (v: DocView) => voi
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
         <span className="text-slate-600">Rate for another date:</span>
-        <input className="input w-44" placeholder="e.g. 12 March 2026" value={date} onChange={(e) => setDate(e.target.value)} />
+        <input className="input w-44" aria-label="Date for the rate" placeholder="e.g. 12 March 2026" value={date} onChange={(e) => setDate(e.target.value)} />
         <LoadingButton className="btn-secondary" loading={busy === "lookup"} loadingText="Gemini is searching…" disabled={!!busy}
           onClick={() => run("lookup", "/api/fx/lookup", { date })}>Ask Gemini again</LoadingButton>
       </div>
-      {missing && <p className="mt-2 text-xs text-amber-800">SolvOrder cannot calculate until every rate is set. It never guesses one.</p>}
-      {err && <p className="mt-2 text-xs text-rose-700">{err}</p>}
+      {missing && <p className="mt-2 text-xs text-amber-800">SolvOrder can't calculate until every rate is filled in. It never guesses one.</p>}
+      {err && <p className="mt-2 text-xs text-rose-700" role="alert">{err} Check the rate or date and try again.</p>}
     </Card>
   );
 }
@@ -221,8 +221,8 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
 
       {flags.length > 0 && (
         <Card className="p-6">
-          <SectionTitle icon={<ShieldAlert className="h-5 w-5" />} title="Fraud & document checks"
-            sub={openBlocks.length ? "Critical issues block every payment until you choose a safe way to handle them." : "Checks run on every document. Choose how to handle each one."} />
+          <SectionTitle icon={<ShieldAlert className="h-5 w-5" />} title="Fraud and document checks"
+            sub={openBlocks.length ? "Serious problems block every payment until you choose a safe way to handle them." : "SolvOrder checks every document. Choose how to handle each finding."} />
           <div className="space-y-3">{flags.map((f, i) => <FlagCard key={f.code + i} flag={f} onResolve={resolve} />)}</div>
         </Card>
       )}
@@ -234,7 +234,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
 
       <Card className="p-6">
         <SectionTitle icon={<FileText className="h-5 w-5" />} title="What SolvOrder read from your documents"
-          sub="Edit any value that is wrong. Values marked 'Needs your check' change the result, so confirm them."
+          sub="Edit any value that is wrong. Values marked “Needs your check” change the result, so please confirm them."
           right={view.documents.length > 0 && <button className="btn-secondary" onClick={() => setShowDocs(!showDocs)}><Eye className="h-4 w-4" /> {showDocs ? "Hide" : "Show"} documents</button>} />
         <div className="divide-y divide-slate-100">
           {view.facts.filter((f) => f.value || state.edits[f.key] !== undefined || ALWAYS_SHOWN.has(f.key)).map((f) => {
@@ -242,18 +242,18 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
             const key = `${f.label}=${f.value}`;
             const edited = state.edits[f.key] !== undefined && state.edits[f.key] !== f.value;
             return (
-              <div key={f.key} className="grid gap-3 py-3 md:grid-cols-[220px_1fr_auto] md:items-start">
+              <div key={f.key} className="grid gap-2 py-4 md:grid-cols-[220px_1fr_auto] md:items-start md:gap-4">
                 <div>
                   <div className="text-sm font-semibold text-slate-800">{f.label}</div>
-                  {f.simulation && <div className="text-[11px] text-slate-400">changes the cash result</div>}
+                  {f.simulation && <div className="text-xs text-slate-500">Changes the cash result</div>}
                 </div>
                 <div>
-                  <input className="input" value={value} placeholder={PLACEHOLDER[f.key]} onChange={(e) => setState({ ...state, edits: { ...state.edits, [f.key]: e.target.value } })} />
+                  <input className="input" aria-label={f.label} value={value} placeholder={PLACEHOLDER[f.key]} onChange={(e) => setState({ ...state, edits: { ...state.edits, [f.key]: e.target.value } })} />
                   {f.original && <OriginalLine o={f.original} />}
                   <SourceQuote f={f} docs={view.documents} />
                   {f.note && <div className="mt-1 text-xs text-amber-700">{f.note}</div>}
                 </div>
-                <div className="flex flex-col items-end gap-2">
+                <div className="flex flex-row flex-wrap items-center gap-2 md:flex-col md:items-end">
                   {edited ? <Pill tone="blue">Edited by you</Pill> : <Status f={f} />}
                   {f.needs_review && !edited && (
                     <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
@@ -269,8 +269,8 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
 
         <div className="mt-6">
           <div className="label mb-2">What you pay the supplier (and shipping)</div>
-          <div className="overflow-hidden rounded-xl border border-slate-200">
-            <table className="w-full text-sm">
+          <div className="scroll-thin overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full min-w-[640px] text-sm">
               <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="px-3 py-2">Payment</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Due</th><th className="px-3 py-2" title="Paid before today: already out of your cash, so it is not a future payment">Already paid?</th><th className="px-3 py-2">Source</th><th /></tr></thead>
               <tbody>
                 {pays.map((p, i) => {
@@ -280,11 +280,11 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
                   const set = (patch: Partial<typeof p>) => setState({ ...state, payEdits: pays.map((x, j) => j === i ? { ...x, ...patch } : x) });
                   return (
                     <tr key={i} className="border-t border-slate-100 align-top">
-                      <td className="px-3 py-2"><input className="input" value={p.label} onChange={(e) => set({ label: e.target.value })} /></td>
-                      <td className="px-3 py-2"><input className="input" value={p.amount} onChange={(e) => set({ amount: e.target.value })} />
+                      <td className="px-3 py-2"><input className="input" aria-label="Payment" value={p.label} onChange={(e) => set({ label: e.target.value })} /></td>
+                      <td className="px-3 py-2"><input className="input" aria-label="Amount" value={p.amount} onChange={(e) => set({ amount: e.target.value })} />
                         {orig?.amount.original && p.amount === orig.amount.value && <OriginalLine o={orig.amount.original} />}</td>
-                      <td className="px-3 py-2"><input className="input" value={p.day} disabled={p.paid} onChange={(e) => set({ day: e.target.value })} /></td>
-                      <td className="px-3 py-2 text-center"><input type="checkbox" className="h-4 w-4 accent-teal-600" checked={p.paid} onChange={(e) => set({ paid: e.target.checked })} /></td>
+                      <td className="px-3 py-2"><input className="input" aria-label="Due" value={p.day} disabled={p.paid} onChange={(e) => set({ day: e.target.value })} /></td>
+                      <td className="px-3 py-2 text-center"><input type="checkbox" aria-label="Already paid" className="h-4 w-4 accent-teal-600" checked={p.paid} onChange={(e) => set({ paid: e.target.checked })} /></td>
                       <td className="px-3 py-2 text-xs text-slate-500">{orig?.amount.span ? `“${orig.amount.span}”` : "you"}{orig?.amount.note && <div className="text-amber-700">{orig.amount.note}</div>}</td>
                       <td className="px-3 py-2">{needs && state.payEdits === null && (
                         <label className="flex items-center gap-1 text-xs"><input type="checkbox" className="accent-teal-600" checked={state.confirmed.has(key)} onChange={() => toggle(key)} />confirm</label>)}</td>
@@ -294,7 +294,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
               </tbody>
             </table>
           </div>
-          <button className="mt-2 text-sm font-semibold text-brand-700" onClick={() => setState({ ...state, payEdits: [...pays, { label: "Payment", amount: "", day: "day 0", paid: false }] })}>+ Add payment</button>
+          <button className="btn-quiet -ml-2 mt-2" onClick={() => setState({ ...state, payEdits: [...pays, { label: "Payment", amount: "", day: "day 0", paid: false }] })}><Plus className="h-4 w-4" /> Add payment</button>
         </div>
 
         {view.bank_details.length > 0 && (
@@ -302,7 +302,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
             <div className="label mb-2 flex items-center gap-1"><Landmark className="h-3.5 w-3.5" /> Bank details found</div>
             <div className="grid gap-2 md:grid-cols-2">
               {view.bank_details.map((b, i) => (
-                <div key={i} className="rounded-xl border border-slate-200 p-3 text-sm">
+                <div key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
                   <div className="font-semibold">{b.payee || "Payee not stated"}</div>
                   <div className="text-slate-600">{b.bank} · <span className="font-mono">{b.account}</span></div>
                   <div className="text-xs text-slate-400">{view.documents.find((d) => d.doc_id === b.source)?.filename ?? b.source}</div>
@@ -315,11 +315,11 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
         {showDocs && (
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             {view.documents.map((d) => (
-              <div key={d.doc_id} className="rounded-xl border border-slate-200">
+              <div key={d.doc_id} className="overflow-hidden rounded-lg border border-slate-200">
                 <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs">
-                  <span className="font-semibold">{d.doc_id} · {d.filename}</span><Pill tone="slate">{d.kind.replace("_", " ")}</Pill>
+                  <span className="font-semibold">{d.filename}</span><Pill tone="slate">{d.kind.replace("_", " ")}</Pill>
                 </div>
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 font-mono text-[11px] text-slate-700">{d.scanned ? "[Scanned PDF: no text layer]" : d.text}</pre>
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 font-mono text-[11px] text-slate-700">{d.scanned ? "This is a scanned PDF, so there is no text to show." : d.text}</pre>
               </div>
             ))}
           </div>
@@ -329,16 +329,16 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
       {view.profile && (
         <Card className="p-6">
           <SectionTitle icon={<Building2 className="h-5 w-5" />} title={`Your business: ${view.profile.name}`}
-            sub="Cash today, your safety reserve and existing payments. SolvOrder adds the order on top of these."
+            sub="Your cash today, your safety reserve and the payments you already expect. SolvOrder adds the order on top of these."
             right={<div className="flex shrink-0 items-center gap-2"><Pill tone={PROFILE_SOURCE[view.profile_source][1]}>{PROFILE_SOURCE[view.profile_source][0]}</Pill>
               <button className="btn-secondary" onClick={onOpenNeeds}><ClipboardList className="h-4 w-4" /> {view.profile_source === "owner" ? "Edit my numbers" : "Ask me what you need"}</button></div>} />
           <div className="grid gap-4 md:grid-cols-3">
-            {([["openingCash", "Cash in the bank today", view.profile.opening_cash], ["reserve", "Minimum cash reserve (never go below)", view.profile.reserve],
+            {([["openingCash", "Cash in the bank today", view.profile.opening_cash], ["reserve", "Safety reserve (never go below)", view.profile.reserve],
               ["maxFin", "Most you'd pay for financing", view.profile.max_financing_cost]] as const).map(([k, label, def]) => (
               <label key={k} className="block"><span className="label">{label}</span>
-                <input type="number" className="input mt-1" value={state[k] ?? Number(def)}
+                <input type="number" className="input mt-1.5" value={state[k] ?? Number(def)}
                   onChange={(e) => setState({ ...state, [k]: e.target.value === "" ? null : Number(e.target.value) })} />
-                <span className="text-xs text-slate-400">{cur}</span></label>
+                <span className="mt-1 block text-xs text-slate-500">In {cur}</span></label>
             ))}
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -346,7 +346,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
               <div className="label mb-1">Existing payments and receipts</div>
               <ul className="space-y-1 text-sm">
                 {view.profile.obligations.map((o, i) => (
-                  <li key={i} className="flex justify-between rounded-lg bg-slate-50 px-3 py-1.5">
+                  <li key={i} className="flex justify-between gap-3 rounded-md bg-slate-50 px-3 py-1.5">
                     <span>Day {o.day} · {o.label}</span>
                     <span className={Number(o.amount) < 0 ? "text-rose-700" : "text-emerald-700"}>{money(Number(o.amount), cur, { sign: true })}</span>
                   </li>
@@ -354,10 +354,10 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
               </ul>
             </div>
             <div>
-              <div className="label mb-1">Financing offers on file (terms cannot be changed by the AI)</div>
+              <div className="label mb-1">Loan offers on file (the AI can't change their terms)</div>
               <ul className="space-y-1 text-sm">
                 {view.profile.offers.map((o) => (
-                  <li key={o.id} className="rounded-lg bg-slate-50 px-3 py-1.5">
+                  <li key={o.id} className="rounded-md bg-slate-50 px-3 py-1.5">
                     <span className="font-semibold">{o.lender}</span> · {money(Number(o.principal), cur)} · {o.terms} · day {o.draw_day}→{o.repay_day}
                   </li>
                 ))}
@@ -367,9 +367,9 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
         </Card>
       )}
 
-      <div className="flex justify-end">
+      <NextBar note={openBlocks.length ? "You can analyse now; payments stay blocked until the fraud check is handled." : "Next, SolvOrder works out your bank balance for every day of the deal."}>
         <LoadingButton className="btn-primary px-6 py-3 text-base" loading={analysing} loadingText="Analysing your cash…" onClick={onNext}>Analyse my cash <ArrowRight className="h-5 w-5" /></LoadingButton>
-      </div>
+      </NextBar>
     </div>
   );
 }

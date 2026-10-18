@@ -1,144 +1,103 @@
-import { useEffect, useRef, useState } from "react";
-import { Download, FileText, FileUp, Keyboard, Plus, ShieldAlert, Sparkles, Trash2, Upload } from "lucide-react";
-import { get, post, upload, type DocView, type Pack, type Role } from "../api";
+import { useState } from "react";
+import { BadgeAlert, FileText, FileUp, Keyboard, LayoutList, Plus, Scale, Sparkles, Trash2, Upload, Wallet } from "lucide-react";
+import type { DocView, Role } from "../api";
+import { useStartStep } from "../hooks/useStartStep";
+import { SampleCarousel } from "./SampleCarousel";
 import { BusyOverlay, Callout, Card, LoadingButton, SectionTitle } from "./ui";
 
-const BADGE: Record<string, string> = {
-  Risk: "bg-sky-100 text-sky-800", Fraud: "bg-rose-100 text-rose-800",
-  Security: "bg-violet-100 text-violet-800", Integrity: "bg-amber-100 text-amber-800", Role: "bg-emerald-100 text-emerald-800",
-};
+const PROMISES = [
+  { icon: Wallet, t: "Cash risk", d: "Your balance for every day of the deal, the days it dips below your safety reserve, and what happens if you are paid late." },
+  { icon: BadgeAlert, t: "Fraud checks", d: "Changed bank details, invoices that don't match the quote, and hidden instructions aimed at the AI." },
+  { icon: Scale, t: "A clear decision", d: "Options ranked by what matters to you. Nothing is sent or paid until you approve." },
+];
 
 export function StartStep({ onLoaded, onHowItWorks, aiOn, role, company }: {
   onLoaded: (v: DocView) => void; onHowItWorks: () => void; aiOn: boolean; role: Role; company: string;
 }) {
-  const [packs, setPacks] = useState<Pack[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [pasted, setPasted] = useState("");
-  const [manual, setManual] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { get<Pack[]>("/api/samples").then(setPacks).catch(() => setPacks([])); }, []);
-
-  async function run(label: string, fn: () => Promise<DocView>) {
-    setBusy(label); setError(null);
-    try { onLoaded(await fn()); } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
-  }
-
-  const steps = busy === "manual"
-    ? ["Checking the facts you entered", "Preparing them for review"]
-    : aiOn
-      ? ["Opening the documents", "Gemini is reading each document", "Checking every quoted value against the source text",
-         "Running fraud and consistency checks", "Preparing the facts for your review"]
-      : ["Opening the documents", "Reading them with the built-in parser", "Running fraud and consistency checks",
-         "Preparing the facts for your review"];
+  const s = useStartStep(onLoaded, aiOn);
+  const { busy } = s;
 
   return (
-    <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-ink-900 via-ink-800 to-brand-700 p-8 text-white shadow-lg">
-        <div className="max-w-3xl">
-          <div className="chip bg-white/10 text-brand-100"><Sparkles className="h-3.5 w-3.5" /> AI decision agent for small-business cash</div>
-          <h1 className="mt-3 text-3xl font-extrabold leading-tight md:text-4xl">Got a big order? Find out if your cash can carry it, before you say yes.</h1>
-          <p className="mt-3 text-slate-200">
-            SolvOrder reads your purchase order and supplier documents with Google Gemini, checks them for fraud,
-            simulates your cash every day, and recommends the safest way to accept, or tells you plainly to decline.
+    <div className="space-y-8">
+      <section className="card grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.25fr_1fr] lg:gap-10">
+        <div>
+          <h2 className="text-[26px] font-semibold leading-tight text-slate-900 sm:text-[30px]">Got a big order? Check that your cash can carry it before you say yes.</h2>
+          <p className="mt-3 max-w-xl leading-relaxed text-slate-600">
+            SolvOrder reads the purchase order and your supplier's documents with Google Gemini, checks them for fraud,
+            works out your bank balance for every day of the deal, and suggests the safest way to accept. If there isn't one, it tells you plainly.
           </p>
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button onClick={onHowItWorks} className="btn bg-white text-ink-900 hover:bg-brand-50">How it works</button>
-            <a href="#samples" className="btn border border-white/30 text-white hover:bg-white/10">Try a sample case ↓</a>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button onClick={onHowItWorks} className="btn-secondary">How it works</button>
+            <a href="#samples" className="btn-quiet">No documents to hand? Try a sample case ↓</a>
           </div>
         </div>
-        <div className="mt-6 grid gap-3 md:grid-cols-3">
-          {[["Risk", "Exact day-by-day cash, reserve breaches and late-payment stress tests"],
-            ["Fraud", "Changed bank details, mismatched invoices and hidden AI instructions flagged"],
-            ["Decision", "Options ranked by what matters to you; nothing runs without your approval"]].map(([t, d]) => (
-            <div key={t} className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-              <div className="font-bold">{t}</div><div className="text-sm text-slate-200">{d}</div>
-            </div>
+        <ul className="divide-y divide-slate-200 border-y border-slate-200 lg:self-center">
+          {PROMISES.map(({ icon: Icon, t, d }) => (
+            <li key={t} className="flex gap-3 py-3.5">
+              <Icon className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
+              <div><div className="text-sm font-semibold text-slate-900">{t}</div><div className="text-[13px] leading-relaxed text-slate-600">{d}</div></div>
+            </li>
           ))}
-        </div>
-      </div>
-
-      <BusyOverlay show={!!busy} title={busy === "manual" ? "Preparing your facts" : aiOn ? "Gemini is reading your documents" : "Reading your documents"}
-        steps={steps} hint={aiOn && busy !== "manual" ? "Google Gemini usually needs 20 to 40 seconds for a full set of documents. You only wait once: the result is cached." : undefined} />
-      {error && <Callout tone="critical" title="Could not read the documents">{error}</Callout>}
-
-      <section id="samples">
-        <SectionTitle icon={<FileText className="h-5 w-5" />} title="Option 1 · Try a sample case"
-          sub="Synthetic businesses and documents. Each case shows a different risk SolvOrder handles." />
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {packs.map((p) => (
-            <Card key={p.id} className="flex flex-col p-5 transition hover:shadow-md">
-              <span className={`chip w-fit ${BADGE[p.badge] ?? "bg-slate-100"}`}>{p.badge === "Fraud" && <ShieldAlert className="h-3 w-3" />}{p.badge}</span>
-              <div className="mt-2 text-base font-bold text-slate-900">{p.title}</div>
-              <div className="text-xs text-slate-500">{p.subtitle}</div>
-              <p className="mt-2 text-sm text-slate-600">{p.story}</p>
-              <ul className="mt-2 flex-1 space-y-1 text-xs text-slate-600">
-                {p.look_for.map((l) => <li key={l} className="flex gap-1.5"><span className="text-brand-600">✓</span>{l}</li>)}
-              </ul>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {p.files.map((f) => (
-                  <a key={f} href={`/api/samples/${p.id}/${f}`} target="_blank" rel="noreferrer"
-                    className="chip bg-slate-100 text-slate-600 hover:bg-slate-200"><Download className="h-3 w-3" />{f.replace(".pdf", "")}</a>
-                ))}
-              </div>
-              <LoadingButton loading={busy === p.id} loadingText="Reading…" disabled={!!busy} className="btn-primary mt-4"
-                onClick={() => run(p.id, () => post<DocView>("/api/documents/sample", { pack: p.id }))}>
-                Use this case
-              </LoadingButton>
-            </Card>
-          ))}
-        </div>
+        </ul>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <BusyOverlay show={!!busy} title={busy === "manual" ? "Preparing your facts" : aiOn ? "Gemini is reading your documents" : "Reading your documents"}
+        steps={s.steps} hint={aiOn && busy !== "manual" ? "Google Gemini usually needs 20 to 40 seconds for a full set of documents. You only wait once: the result is cached." : undefined} />
+      {s.error && <Callout tone="critical" title="Could not read the documents">{s.error} Check that the files are PDF or plain text and try again, or type the facts in yourself.</Callout>}
+
+      <section className="grid gap-6 lg:grid-cols-[1.15fr_1fr]">
         <Card className="p-6">
-          <SectionTitle icon={<Upload className="h-5 w-5" />} title="Option 2 · Use your own documents"
+          <SectionTitle icon={<Upload />} title="Option 1 · Use your own documents"
             sub="Purchase order, supplier quote, invoice or email. PDF or text, up to 6 files." />
-          <div onClick={() => input.current?.click()}
+          <div role="button" tabIndex={0} aria-label="Choose files to upload" onClick={() => s.input.current?.click()}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); s.input.current?.click(); } }}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); setFiles((f) => [...f, ...Array.from(e.dataTransfer.files)].slice(0, 6)); }}
-            className="cursor-pointer rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center transition hover:border-brand-500 hover:bg-brand-50/40">
-            <FileUp className="mx-auto h-8 w-8 text-brand-600" />
-            <div className="mt-2 text-sm font-semibold text-slate-700">Drop files here or click to choose</div>
-            <div className="text-xs text-slate-500">PDF, TXT or EML · max 8 MB each</div>
-            <input ref={input} type="file" multiple accept=".pdf,.txt,.eml,text/plain,application/pdf" className="hidden"
-              onChange={(e) => setFiles((f) => [...f, ...Array.from(e.target.files ?? [])].slice(0, 6))} />
+            onDrop={(e) => { e.preventDefault(); s.addFiles(Array.from(e.dataTransfer.files)); }}
+            className="cursor-pointer rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-7 text-center transition hover:border-brand-400 hover:bg-brand-50/50">
+            <FileUp className="mx-auto h-7 w-7 text-brand-600" />
+            <div className="mt-2 text-sm font-semibold text-slate-800">Drop files here, or click to choose</div>
+            <div className="text-xs text-slate-500">PDF, TXT or EML, up to 8 MB each</div>
+            <input ref={s.input} type="file" multiple accept=".pdf,.txt,.eml,text/plain,application/pdf" className="hidden"
+              onChange={(e) => s.addFiles(Array.from(e.target.files ?? []))} />
           </div>
-          {files.length > 0 && (
-            <ul className="mt-3 space-y-1.5">
-              {files.map((f, i) => (
-                <li key={i} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                  <span className="flex items-center gap-2 truncate"><FileText className="h-4 w-4 text-slate-400" />{f.name}</span>
-                  <button onClick={() => setFiles(files.filter((_, j) => j !== i))} className="text-slate-400 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+          {s.files.length > 0 && (
+            <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-200">
+              {s.files.map((f, i) => (
+                <li key={i} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="flex min-w-0 items-center gap-2"><FileText className="h-4 w-4 shrink-0 text-slate-400" /><span className="truncate">{f.name}</span></span>
+                  <button onClick={() => s.removeFile(i)} className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label={`Remove ${f.name}`}><Trash2 className="h-4 w-4" /></button>
                 </li>
               ))}
             </ul>
           )}
-          <div className="mt-4">
-            <div className="label mb-1">…or paste text (e.g. an email from the supplier)</div>
-            <textarea value={pasted} onChange={(e) => setPasted(e.target.value)} rows={4} className="input font-mono text-xs"
+          <label className="mt-5 block">
+            <span className="label">Or paste text, such as an email from the supplier</span>
+            <textarea value={s.pasted} onChange={(e) => s.setPasted(e.target.value)} rows={4} className="input mt-1.5 font-mono text-xs"
               placeholder="From: supplier@example.com&#10;Subject: Payment details…" />
-          </div>
+          </label>
           <LoadingButton loading={busy === "upload"} loadingText={aiOn ? "Gemini is reading…" : "Reading…"}
-            disabled={!!busy || (!files.length && !pasted.trim())} className="btn-primary mt-4 w-full"
-            onClick={() => run("upload", () => upload(files, pasted))}>
+            disabled={!!busy || (!s.files.length && !s.pasted.trim())} className="btn-primary mt-4 w-full py-2.5"
+            onClick={s.readUploads}>
             <Sparkles className="h-4 w-4" /> {aiOn ? "Read documents with Gemini" : "Read documents"}
           </LoadingButton>
-          <p className="mt-2 text-xs text-slate-500">Demo: use synthetic documents only. Files stay in this session's memory and are never stored.</p>
+          <p className="mt-2 text-xs text-slate-500">{!s.files.length && !s.pasted.trim() ? "Add a file or paste some text to continue. " : ""}This is a demo: please use made-up documents. Files stay in this session's memory and are never stored.</p>
         </Card>
 
         <Card className="p-6">
-          <SectionTitle icon={<Keyboard className="h-5 w-5" />} title="Option 3 · Enter the facts yourself"
-            sub="No documents, or AI unavailable? The engine works fully from typed facts." />
-          {!manual ? (
-            <button className="btn-secondary w-full" onClick={() => setManual(true)}><Plus className="h-4 w-4" /> Open the manual form</button>
+          <SectionTitle icon={<Keyboard />} title="Option 2 · Type the facts in yourself"
+            sub="No documents, or the AI isn't available? SolvOrder works just as well from typed numbers." />
+          {!s.manual ? (
+            <button className="btn-secondary w-full" onClick={() => s.setManual(true)}><Plus className="h-4 w-4" /> Open the form</button>
           ) : (
-            <ManualForm busy={!!busy} loading={busy === "manual"} role={role} company={company}
-              onSubmit={(facts, pays, r) => run("manual", () => post<DocView>("/api/documents/manual", { facts, supplier_payments: pays, role: r }))} />
+            <ManualForm busy={!!busy} loading={busy === "manual"} role={role} company={company} onSubmit={s.submitManual} />
           )}
         </Card>
+      </section>
+
+      <section id="samples" className="scroll-mt-40">
+        <SectionTitle icon={<LayoutList />} title="Option 3 · Try a sample case"
+          sub="Made-up businesses and documents. Each case shows a different problem SolvOrder catches." />
+        <SampleCarousel packs={s.packs} busy={busy} onPick={s.pickSample} />
       </section>
     </div>
   );
@@ -170,17 +129,17 @@ function ManualForm({ busy, loading, onSubmit, role: initialRole, company }: {
   return (
     <div className="space-y-3">
       <div>
-        <div className="label mb-1">In this deal I am the…</div>
+        <div className="label mb-1.5">In this deal I am the…</div>
         <div className="grid grid-cols-2 gap-2">
           {([["seller", "Seller", "A customer ordered from me"], ["buyer", "Buyer", "A supplier offered me goods"]] as [Role, string, string][]).map(([r, t, d]) => (
-            <button key={r} type="button" onClick={() => switchRole(r)} className={`rounded-xl border-2 px-3 py-2 text-left ${role === r ? "border-brand-500 bg-brand-50" : "border-slate-200"}`}>
+            <button key={r} type="button" aria-pressed={role === r} onClick={() => switchRole(r)} className={`rounded-lg border px-3 py-2 text-left transition ${role === r ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500" : "border-slate-300 hover:border-slate-400"}`}>
               <div className="text-sm font-bold">{t}</div><div className="text-xs text-slate-500">{d}</div>
             </button>
           ))}
         </div>
       </div>
       {role === "buyer" ? (
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         {field("supplier_name", "Supplier", "Meghna Fabrics Ltd")}
         {field("supplier_email", "Supplier email", "sales@meghnafabrics.example")}
         {field("order_ref", "Offer / quotation reference", "Q-2045")}
@@ -191,7 +150,7 @@ function ManualForm({ busy, loading, onSubmit, role: initialRole, company }: {
         {field("income_days", "Days after arrival that income comes", "15")}
       </div>
       ) : (
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         {field("customer_name", "Customer", "Meridian Retail")}
         {field("order_ref", "Order reference", "PO-1001")}
         {field("order_value", "Order value", "30000")}
@@ -209,17 +168,18 @@ function ManualForm({ busy, loading, onSubmit, role: initialRole, company }: {
       </div>
       )}
       <div>
-        <div className="label mb-1">What you pay the supplier (amount, day, already paid?)</div>
+        <div className="label mb-1">What you pay the supplier</div>
+        <div className="mb-1 grid grid-cols-[1fr_96px_64px_auto_28px] gap-2 text-[11px] text-slate-500"><span>What for</span><span>Amount</span><span>Day</span><span>Paid?</span><span /></div>
         {pays.map((p, i) => (
           <div key={i} className="mb-2 grid grid-cols-[1fr_110px_80px_auto_32px] items-center gap-2">
-            <input className="input" value={p.label} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} />
-            <input className="input" placeholder="12000" value={p.amount} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} />
-            <input className="input" type="number" min={0} value={p.day} disabled={p.paid} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, day: Number(e.target.value) } : x))} />
+            <input className="input" aria-label="Payment" value={p.label} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} />
+            <input className="input" aria-label="Amount" placeholder="12000" value={p.amount} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} />
+            <input className="input" aria-label="Day" type="number" min={0} value={p.day} disabled={p.paid} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, day: Number(e.target.value) } : x))} />
             <label className="flex items-center gap-1 text-xs" title="Already paid before today: it is already out of your cash"><input type="checkbox" className="accent-teal-600" checked={p.paid} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, paid: e.target.checked } : x))} />paid</label>
-            <button className="text-slate-400 hover:text-rose-600" onClick={() => setPays(pays.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button>
+            <button className="text-slate-400 hover:text-rose-600" aria-label="Remove payment" onClick={() => setPays(pays.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button>
           </div>
         ))}
-        <button className="text-sm font-semibold text-brand-700" onClick={() => setPays([...pays, { label: "Payment", amount: "", day: 0, paid: false }])}>+ Add payment</button>
+        <button className="btn-quiet -ml-2" onClick={() => setPays([...pays, { label: "Payment", amount: "", day: 0, paid: false }])}><Plus className="h-4 w-4" /> Add payment</button>
       </div>
       <LoadingButton loading={loading} loadingText="Checking…" disabled={busy} className="btn-primary w-full" onClick={() => onSubmit(facts(), pays, role)}>Use these facts</LoadingButton>
       <p className="text-xs text-slate-500">Your cash position, reserve and lenders come from the business profile, which you can edit on the next screen.</p>

@@ -15,18 +15,19 @@ function WalkColumn({ w, cur, title, tone }: { w: Walk; cur: string; title: stri
     </div>
   );
   return (
-    <div className={`rounded-2xl border p-5 ${tone === "good" ? "border-emerald-200 bg-emerald-50/40" : "border-slate-200 bg-white"}`}>
+    <div className={`rounded-lg border p-5 ${tone === "good" ? "border-emerald-200 bg-emerald-50/50" : "border-rose-200 bg-rose-50/30"}`}>
       <div className="label">{title}</div>
-      <div className="mb-3 font-bold text-slate-900">{w.plan}</div>
+      <div className="mb-3 font-semibold text-slate-900">{w.plan}</div>
       <Line icon={<span className="h-4 w-4" />} label="Cash in the bank today" value={money(w.opening, cur)} />
-      {outs.length > 0 && <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Paid out up to day {w.low_day}</div>}
+      {outs.length > 0 && <div className="mt-2 text-xs font-semibold text-slate-500">Paid out up to day {w.low_day}</div>}
       {outs.map(([g, v]) => <Line key={g} icon={<Minus className="h-4 w-4 text-rose-600" />} label={g} value={money(v, cur)} cls="text-rose-800" />)}
-      {ins.length > 0 && <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Received up to day {w.low_day}</div>}
+      {ins.length > 0 && <div className="mt-2 text-xs font-semibold text-slate-500">Received up to day {w.low_day}</div>}
       {ins.map(([g, v]) => <Line key={g} icon={<Plus className="h-4 w-4 text-emerald-600" />} label={g} value={money(v, cur)} cls="text-emerald-800" />)}
       <div className="mt-2 border-t border-slate-200 pt-2">
         <Line icon={<Equal className="h-4 w-4" />} label={`Lowest cash (day ${w.low_day})`} value={money(w.low, cur)} cls="text-base font-bold" />
         <Line icon={<span className="h-4 w-4" />} label="Your safety reserve" value={money(w.reserve, cur)} cls="text-slate-500" />
-        <div className={`mt-2 rounded-xl px-3 py-2 text-sm font-semibold ${safe ? "bg-emerald-100 text-emerald-900" : "bg-rose-100 text-rose-900"}`}>
+        <div className={`mt-2 rounded-md px-3 py-2 text-sm font-semibold ${safe ? "bg-emerald-100 text-emerald-900" : "bg-rose-100 text-rose-900"}`}>
+          <span className="sr-only">{safe ? "Safe: " : "Problem: "}</span>
           {safe ? `${money(w.headroom, cur)} above the reserve at the tightest moment` : `${money(-w.headroom, cur)} short of the reserve on day ${w.low_day}`}
         </div>
       </div>
@@ -64,17 +65,17 @@ export function CashWalk({ a }: { a: Analysis }) {
     <Card className="p-6">
       <SectionTitle icon={<Route className="h-5 w-5" />} title="How SolvOrder reached this decision"
         sub={`Cash today, minus payroll, bills and the ${w.deal}'s costs, plus what comes in, gives your lowest cash point. That point is compared with your reserve.`} />
-      <ol className="mb-5 space-y-1.5 text-sm text-slate-700">
-        {story.map((t, i) => <li key={i} className="flex gap-2"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">{i + 1}</span>{t}</li>)}
+      <ol className="mb-5 max-w-4xl space-y-2 text-sm leading-relaxed text-slate-700">
+        {story.map((t, i) => <li key={i} className="flex gap-2"><span className="mt-px grid h-5 w-5 shrink-0 place-items-center rounded-full border border-brand-200 bg-brand-50 text-[11px] font-bold text-brand-700">{i + 1}</span>{t}</li>)}
       </ol>
       <div className={`grid gap-4 ${same ? "" : "md:grid-cols-2"}`}>
         <WalkColumn w={asis} cur={cur} title={`If you accept the ${w.deal} as it is`} tone={asis.headroom >= 0 ? "good" : "bad"} />
         {!same && <WalkColumn w={recommended} cur={cur} title={declined ? "If you decline" : "With the recommended plan"} tone={recommended.headroom >= 0 ? "good" : "bad"} />}
       </div>
       <details className="mt-5">
-        <summary className="cursor-pointer text-sm font-semibold text-brand-700">Show every payment with the running balance</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-brand-700 hover:underline">Show every payment with the balance after it</summary>
         {!same && <div className="mt-3"><Segmented value={ledger} onChange={setLedger} options={[{ value: "asis", label: "Accept as-is" }, { value: "recommended", label: "Recommended plan" }]} /></div>}
-        <table className="mt-3 w-full text-sm">
+        <div className="scroll-thin overflow-x-auto"><table className="mt-3 w-full min-w-[520px] text-sm">
           <thead className="text-left text-xs text-slate-500"><tr><th className="py-1">Day</th><th>What</th><th className="text-right">Amount</th><th className="text-right">Cash after</th></tr></thead>
           <tbody>
             <tr className="border-t border-slate-100"><td className="py-1.5 text-slate-500">0</td><td>Cash today</td><td /><td className="text-right font-semibold">{money(a.walk[ledger].opening, cur)}</td></tr>
@@ -87,7 +88,7 @@ export function CashWalk({ a }: { a: Analysis }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
         <p className="mt-2 text-xs text-slate-500">Red rows are below your {money(a.case.reserve, cur)} reserve. On a day with money in and out, money out is counted first.</p>
       </details>
     </Card>

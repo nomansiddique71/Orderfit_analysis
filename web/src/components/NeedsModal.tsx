@@ -116,14 +116,14 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
           {rows.map((r, i) => (
             <div key={i} className="grid items-end gap-2" style={{ gridTemplateColumns: `repeat(${spec.cols.length}, minmax(0,1fr)) 28px` }}>
               {spec.cols.map(([k, label, ph]) => (
-                <label key={k} className="block"><span className="text-[11px] text-slate-500">{label}</span>
+                <label key={k} className="block"><span className="text-xs text-slate-600">{label}</span>
                   <input className="input mt-0.5" value={r[k] ?? ""} placeholder={ph} inputMode={k === "label" || k === "lender" || k === "days" ? undefined : "decimal"}
                     onChange={(e) => set(rows.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></label>
               ))}
               <button className="mb-2 text-slate-400 hover:text-rose-600" aria-label="Remove row" onClick={() => set(rows.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button>
             </div>
           ))}
-          <button className="flex items-center gap-1 text-sm font-semibold text-brand-700" onClick={() => set([...rows, { ...spec.blank }])}><Plus className="h-4 w-4" /> Add a row</button>
+          <button className="btn-quiet -ml-2" onClick={() => set([...rows, { ...spec.blank }])}><Plus className="h-4 w-4" /> Add a row</button>
         </div>
       );
     }
@@ -147,7 +147,7 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
         <div className="grid gap-2 sm:grid-cols-2">
           {([["seller", "I am the seller", "A customer ordered from me"], ["buyer", "I am the buyer", "A supplier offered me goods"]] as [Role, string, string][]).map(([r, t, d]) => (
             <button key={r} type="button" disabled={switching} onClick={() => pickRole(r)}
-              className={`rounded-xl border-2 px-3 py-2 text-left ${roleNow === r ? "border-brand-500 bg-brand-50" : "border-slate-200 hover:border-slate-300"}`}>
+              aria-pressed={roleNow === r} className={`rounded-lg border px-3 py-2 text-left transition ${roleNow === r ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500" : "border-slate-300 hover:border-slate-400"}`}>
               <div className="text-sm font-bold">{t}{n.suggested === r && <span className="ml-2 text-xs font-semibold text-amber-700">documents say this</span>}</div>
               <div className="text-xs text-slate-500">{d}</div>
             </button>
@@ -165,31 +165,31 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
   };
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 grid place-items-center bg-ink-950/50 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-6">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 grid place-items-center bg-ink-950/45 p-3 sm:p-4">
+      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5 sm:p-6">
           <div className="flex gap-3">
-            <div className="rounded-xl bg-brand-50 p-2 text-brand-700"><ClipboardList className="h-5 w-5" /></div>
+            <ClipboardList className="mt-1 h-5 w-5 shrink-0 text-brand-600" />
             <div>
-              <h3 className="text-lg font-bold text-slate-900">A few questions before SolvOrder decides</h3>
+              <h3 className="text-xl font-semibold text-slate-900">A few questions before SolvOrder decides</h3>
               <p className="text-sm text-slate-500">Your documents describe the order. To know if your cash can carry it, SolvOrder also needs your business's own numbers.</p>
             </div>
           </div>
-          <button className="text-slate-400 hover:text-slate-700" aria-label="Close" onClick={onClose}><X className="h-5 w-5" /></button>
+          <button className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close" onClick={onClose}><X className="h-5 w-5" /></button>
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-6">
           {!nv && !err && <div className="py-10"><Spinner text="Gemini is reading your documents to work out what else it needs…" /></div>}
           {nv && (
             <Callout tone={nv.mode === "gemini" ? "success" : "info"} title={nv.mode === "gemini" ? "Questions chosen by Gemini" : "Standard checklist"}>
-              {nv.note} Gemini only picks and words the questions; your answers go straight into the cash engine.
+              {nv.note} Gemini only picks and words the questions; your answers go straight into the cash calculation.
             </Callout>
           )}
           {nv?.needs.map((n) => (
-            <div key={n.key} className="rounded-2xl border border-slate-200 p-4">
+            <div key={n.key} className="rounded-lg border border-slate-200 p-4">
               <div className="mb-1 flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-slate-900">{n.question}</span>
-                {n.required ? <Pill tone="red">Required</Pill> : <Pill tone="slate">Optional</Pill>}
+                <span className="font-semibold leading-snug text-slate-900">{n.question}</span>
+                {n.required ? <Pill tone="amber">Required</Pill> : <Pill tone="slate">Optional</Pill>}
               </div>
               <p className="mb-3 flex items-start gap-1 text-xs text-slate-500">
                 {n.source === "gemini" && <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-brand-600" />}{n.why}
@@ -200,12 +200,12 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
           {err && <Callout tone="critical">{err}</Callout>}
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
           {nv?.profile_source === "default"
             ? <LoadingButton className="btn-secondary" loading={saving === "example"} loadingText="Loading example…" disabled={!!saving} onClick={useExample}>Skip: use the example business's numbers</LoadingButton>
             : <span />}
           <div className="flex items-center gap-3">
-            {missingRequired.length > 0 && <span className="text-xs text-rose-700">Fill in: {missingRequired.map((n) => n.key.replace(/_/g, " ")).join(", ")}</span>}
+            {missingRequired.length > 0 && <span className="text-xs text-amber-800">Still needed: {missingRequired.map((n) => n.key.replace(/_/g, " ")).join(", ")}</span>}
             <LoadingButton className="btn-primary" loading={saving === "save"} loadingText="Saving…" disabled={!nv || !!saving || missingRequired.length > 0} onClick={save}>Save answers</LoadingButton>
           </div>
         </div>
