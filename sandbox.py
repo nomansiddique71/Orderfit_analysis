@@ -233,7 +233,7 @@ def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
                                    aid, approvals, pv)
         if not ok:
             return report(False, [f"outbox blocked: {reason}"])
-        outbox.send("counterparty@example.com", "OrderFit approved message", draft, aid)
+        outbox.send("counterparty@example.com", "SolvOrder approved message", draft, aid)
         log.append("outbox.send", "T2", {"to": "counterparty", "len": len(draft), "override": ovr},
                    aid, "sent (mock)" + tag)
         steps.append("Draft message posted to mock outbox.")

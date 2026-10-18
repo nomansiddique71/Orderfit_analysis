@@ -4,6 +4,7 @@ import { post, type Analysis, type Plan, type ScenarioResult } from "../api";
 import { money, planTitle, words } from "../format";
 import { BreakdownModal } from "./Breakdown";
 import { CashChart } from "./CashChart";
+import { Markdown } from "./Markdown";
 import { Callout, Card, LoadingButton, NextBar, Pill, SectionTitle, Segmented, Spinner, Updating } from "./ui";
 
 export const PRIORITIES = [
@@ -305,7 +306,7 @@ function AskAgent({ a }: { a: Analysis }) {
         {answers.map((x, i) => (
           <div key={i} className={`rounded-lg border-l-[3px] p-4 ${x.source === "error" ? "border-rose-500 bg-rose-50" : "border-brand-500 bg-slate-50"}`}>
             <div className="text-xs font-semibold text-slate-500">{x.q}</div>
-            <div className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{x.text}</div>
+            <Markdown text={x.text} className="mt-1.5 text-sm leading-relaxed text-slate-800" />
             <div className="mt-1.5 text-[11px] text-slate-500">{x.source === "gemini" ? "Answered by Google Gemini, from SolvOrder's numbers" : x.source === "error" ? "Couldn't get an answer. Please try again." : "Standard answer (Gemini not used)"}</div>
           </div>
         ))}
