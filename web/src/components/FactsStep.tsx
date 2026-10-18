@@ -94,6 +94,36 @@ const PROFILE_SOURCE: Record<string, [string, "blue" | "green" | "amber" | "slat
   example: ["Example numbers", "amber"], default: ["Not given yet", "amber"],
 };
 
+const ROLE_SOURCE: Record<string, string> = {
+  profile: "from your company profile", documents: "read from the documents", owner: "you chose it for this deal",
+  sample: "this sample's business", default: "SolvOrder's default",
+};
+
+/** Which side of the deal the owner is on, why SolvOrder thinks so, and a one-click switch. */
+function RoleBanner({ view, setView, onOpenNeeds }: { view: DocView; setView: (v: DocView) => void; onOpenNeeds: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const other = view.role === "seller" ? "buyer" : "seller";
+  const g = view.role_guess;
+  const conflict = !!g.role && g.role !== view.role;
+  async function flip() {
+    setBusy(true); setErr(null);
+    try { const v = await post<DocView>("/api/role", { role: other }); setView(v); if (v.questions > 0) onOpenNeeds(); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  return (
+    <Callout tone={conflict ? "warning" : "info"}
+      title={<>In this deal you are the <b>{view.role === "seller" ? "seller" : "buyer"}</b> <span className="font-normal text-slate-500">({ROLE_SOURCE[view.role_source]})</span></>}
+      action={view.role_source !== "sample" ? <LoadingButton className="btn-secondary" loading={busy} loadingText="Switching…" onClick={flip}>I am the {other} here</LoadingButton> : undefined}>
+      {view.role === "seller"
+        ? "A customer ordered from you. SolvOrder weighs their payment against what you pay your supplier, and after approval notifies your customer."
+        : "A supplier offered you goods. SolvOrder weighs what you pay them against the income you expect from the goods, and after approval notifies your supplier."}
+      {g.evidence && <div className="mt-1 text-xs">{conflict ? "Check this: " : ""}{g.evidence}</div>}
+      {err && <div className="mt-1 text-xs text-rose-700">{err}</div>}
+    </Callout>
+  );
+}
+
 export function FactsStep({ view, setView, state, setState, onNext, analysing, onOpenNeeds }: {
   view: DocView; setView: (v: DocView) => void; state: FactState; setState: (s: FactState) => void;
   onNext: () => void; analysing: boolean; onOpenNeeds: () => void;
@@ -121,6 +151,8 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
         {MODE_TEXT[view.mode] ?? view.note}
         {/scanned|could not read/i.test(view.note) && <div className="mt-1 text-xs opacity-80">{view.note}</div>}
       </Callout>
+
+      <RoleBanner view={view} setView={setView} onOpenNeeds={onOpenNeeds} />
 
       {view.profile_source === "default" && (
         <Callout tone="warning" title="SolvOrder still needs your business's numbers"

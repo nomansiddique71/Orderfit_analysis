@@ -123,7 +123,7 @@ export default function App() {
             These were not found in the documents: <b>{missing.join(", ")}</b>. Add them in the table below (or use the manual form on the first screen). SolvOrder never guesses a number.
           </Callout>}
 
-          {step === 0 && <StartStep aiOn={!!ai?.gemini} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setChoice(null); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); if (v.profile_source === "default") setNeedsOpen(true); }} />}
+          {step === 0 && <StartStep aiOn={!!ai?.gemini} role={user.role} company={user.business} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setChoice(null); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); if (v.profile_source === "default" || v.questions > 0) setNeedsOpen(true); }} />}
           {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} analysing={busy} onOpenNeeds={() => setNeedsOpen(true)} />}
           {step === 2 && analysis && <RiskStep a={analysis} reading={reading} setReading={setReading} onNext={() => go(3)} updating={busy}
             onConfirm={(k) => setFacts((f) => ({ ...f, confirmed: new Set([...f.confirmed, k]) }))} />}
@@ -136,7 +136,8 @@ export default function App() {
       </main>
       {how && <HowItWorks onClose={() => setHow(false)} />}
       {profileOpen && <ProfileModal user={user} onClose={() => setProfileOpen(false)} onUser={setUser} onLogout={logout} />}
-      {needsOpen && view && <NeedsModal edits={facts.edits} onClose={() => setNeedsOpen(false)}
+      {needsOpen && view && <NeedsModal edits={facts.edits} role={view.role} onClose={() => setNeedsOpen(false)}
+        onView={(v) => { setView(v); setAnalysis(null); setMaxStep(1); }}
         onSaved={(v, answers) => {
           if (v) setView(v);
           setFacts((f) => ({ ...f, edits: { ...f.edits, ...answers }, ...(v ? { reserve: null, openingCash: null, maxFin: null } : {}) }));

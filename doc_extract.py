@@ -211,7 +211,7 @@ def parse_template(docs: list[Document]) -> Facts:
             f.advance_received = _find(d, "Advance received", "Advance paid", "Deposit received")
             if not f.customer_email.present:
                 f.customer_email = _find(d, "Buyer contact", "Buyer email", "Customer email")
-            for m in re.finditer(r"^\s*Item\s*\d+\s*[:\-]\s*(?P<desc>.+?)\s+(?P<amt>(USD|INR|Rs\.?|\$)\s*[\d,\.]+\s*\w*)\s*$",
+            for m in re.finditer(r"^\s*Item\s*\d+\s*[:\-]\s*(?P<desc>.+?)\s+(?P<amt>(USD|INR|Rs\.?|BDT|Tk\.?|GBP|EUR|[$₹৳£€])\s*[\d,\.]+\s*\w*)\s*$",
                                  d.text, re.IGNORECASE | re.MULTILINE):
                 f.line_items.append(LineItem(m.group("desc").strip(),
                                              Fact(m.group("amt"), d.doc_id, m.group(0).strip(), 0.9)))
@@ -309,16 +309,28 @@ def verify_facts(facts: Facts, docs: list[Document]) -> None:
 # -------------------------------------------------------- hand-off to agent
 
 
+# Checks on the customer's payment terms and cancellation rights: meaningless when
+# the owner is the buyer.
+BUYER_SKIPPED_FLAGS = {"NET_TERMS", "CANCELLATION"}
+
+
 def to_document_stage(facts: Facts, docs: list[Document], mode: str, note: str,
                       confirmed: frozenset[str] = frozenset(),
-                      resolved: dict[str, str] | None = None):
-    """Package verified facts as an agent.DocumentStage (fields, flags)."""
+                      resolved: dict[str, str] | None = None, currency: str | None = None,
+                      role: str = "seller"):
+    """Package verified facts as an agent.DocumentStage (fields, flags).
+
+    role "buyer": facts and checks about a customer's payment terms do not apply
+    (the owner is the customer), so they neither show nor make a result provisional."""
+    from docmodel import visible_facts
+
+    shown = visible_facts(role)
     from agent import DocumentStage, ExtractedField, InjectionFlag
     from doc_checks import check_integrity
 
     fields: list[ExtractedField] = []
     for name, fact in facts.scalars().items():
-        if not fact.present:
+        if not fact.present or name not in shown:
             continue
         q = None
         if fact.confidence < LOW_CONFIDENCE or not fact.verified:
@@ -333,7 +345,9 @@ def to_document_stage(facts: Facts, docs: list[Document], mode: str, note: str,
             p.amount.source, p.amount.span, conf,
             None if verified and conf >= LOW_CONFIDENCE else
             (p.amount.note or p.day.note or "Please confirm this payment."), simulation=True))
-    flags = check_integrity(facts, docs)
+    flags = check_integrity(facts, docs, currency)
+    if role == "buyer":
+        flags = [f for f in flags if f.code not in BUYER_SKIPPED_FLAGS]
     for f in flags:
         if resolved and f.code in resolved:
             f.resolved, f.resolution_note = True, resolved[f.code]

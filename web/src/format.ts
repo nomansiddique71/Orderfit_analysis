@@ -21,7 +21,7 @@ export function money(n: number | null | undefined, currency = "USD", opts: { si
 
 // Plain-language name for a plan (no internal IDs on screen).
 export function planTitle(p: Plan, currency = "USD"): string {
-  if (p.id === "decline") return "Decline the order";
+  if (p.id === "decline") return p.label; // "Decline the order" / "Decline the offer" (buyer)
   if (p.id === "accept-as-is") return "Accept as it is";
   const parts: string[] = [];
   if (p.advance_pct > 0) parts.push(`Ask the customer for ${Math.round(p.advance_pct * 100)}% upfront`);
@@ -36,4 +36,15 @@ export function planTitle(p: Plan, currency = "USD"): string {
 
 export function pct(x: number) {
   return `${Math.round(x * 100)}%`;
+}
+
+/** Words that change with the owner's side of the deal (seller: a customer's order; buyer: a supplier's offer). */
+export function words(role: string | undefined) {
+  const buyer = role === "buyer";
+  return {
+    deal: buyer ? "offer" : "order",
+    payer: buyer ? "the income from the goods" : "the customer",
+    pays: buyer ? "arrives" : "pays",
+    paysLate: buyer ? "the income arrives late" : "the customer pays late",
+  };
 }

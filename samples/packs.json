@@ -70,5 +70,42 @@
       "purchase_order.pdf",
       "supplier_quote.pdf"
     ]
+  },
+  {
+    "id": "seller_bdt",
+    "title": "You are the seller (BDT)",
+    "badge": "Role",
+    "role": "seller",
+    "subtitle": "Padma Garments \u00b7 BDT 18,00,000 order from Rupsha Fashion House",
+    "story": "A customer orders 3,000 shirts. Padma must pay its fabric supplier long before the customer pays. After approval, SolvOrder notifies the customer.",
+    "look_for": [
+      "Role detected from the PO: Padma is the seller",
+      "Amounts in taka with lakh grouping (18,00,000)",
+      "Notify button addresses the customer, Rupsha Fashion House"
+    ],
+    "profile": "padma",
+    "files": [
+      "purchase_order.pdf",
+      "supplier_quote.pdf"
+    ]
+  },
+  {
+    "id": "buyer_bdt",
+    "title": "You are the buyer (BDT)",
+    "badge": "Role",
+    "role": "buyer",
+    "subtitle": "Padma Garments \u00b7 BDT 8,00,000 fabric offer from Meghna Fabrics",
+    "story": "A supplier offers fabric. Padma pays now and earns from the garments later. SolvOrder checks the offer against Padma's cash, and after approval notifies the supplier.",
+    "look_for": [
+      "Role detected from the PO: Padma is the buyer",
+      "No 'ask the customer for an advance' plans: there is no customer in this deal",
+      "Ask the supplier to be paid later, or borrow the smallest safe amount",
+      "Notify button addresses the supplier, Meghna Fabrics"
+    ],
+    "profile": "padma_buyer",
+    "files": [
+      "purchase_order.pdf",
+      "supplier_quote.pdf"
+    ]
   }
 ]

@@ -41,7 +41,9 @@ import doc_extract
 import engine
 import gemini_client
 import needs
-from docmodel import FACT_LABELS, SIMULATION_FACTS, Fact, Facts, SupplierPayment
+import role as roles
+from docmodel import (FACT_LABELS, SIMULATION_FACTS, Fact, Facts, SupplierPayment, fact_label,
+                      visible_facts)
 from sandbox import (OVERRIDE_TAG, Approval, MockLenderPortal, MockOutbox, OperationLog,
                      PermissionGate, SimulatedBank, execute_plan, send_on_approval)
 
@@ -91,6 +93,9 @@ class Session:
     last: dict = field(default_factory=dict)  # run, case, pay_day, versions
     ai_cache: dict = field(default_factory=dict)
     account: str = ""  # email of the logged-in owner who loaded the case ("" = anonymous API use)
+    role: str = "seller"  # the owner's side in THIS deal (seller | buyer)
+    role_source: str = "default"  # profile | documents | owner | sample | default
+    role_guess: roles.RoleGuess = field(default_factory=lambda: roles.RoleGuess(None, ""))
 
     @property
     def gate(self) -> PermissionGate:
@@ -125,8 +130,8 @@ def num(x) -> float | None:
     return None if x is None else float(x)
 
 
-def _fact_json(key: str, f: Fact) -> dict:
-    return {"key": key, "label": FACT_LABELS.get(key, key), "value": f.value, "source": f.source,
+def _fact_json(key: str, f: Fact, role: str = "seller") -> dict:
+    return {"key": key, "label": fact_label(key, role), "value": f.value, "source": f.source,
             "span": f.span, "confidence": round(f.confidence, 2), "verified": f.verified,
             "note": f.note, "simulation": key in SIMULATION_FACTS,
             "needs_review": key in SIMULATION_FACTS and f.present and
@@ -135,13 +140,18 @@ def _fact_json(key: str, f: Fact) -> dict:
 
 def _documents_view(s: Session) -> dict:
     f = s.facts
-    stage = doc_extract.to_document_stage(f, s.docs, s.mode, s.note, resolved=s.resolved)
+    stage = doc_extract.to_document_stage(f, s.docs, s.mode, s.note, resolved=s.resolved,
+                                          currency=_doc_currency(s), role=s.role)
+    shown = visible_facts(s.role)
     return {
         "mode": s.mode, "note": s.note, "sample_id": s.sample_id,
+        "role": s.role, "role_source": s.role_source,
+        "role_guess": {"role": s.role_guess.role, "evidence": s.role_guess.evidence},
+        "currency": s.profile.currency if s.profile else _currency(s),
         "documents": [{"doc_id": d.doc_id, "filename": d.filename, "kind": d.kind,
                        "scanned": not d.has_text, "chars": len(d.text),
                        "text": d.text[:6000]} for d in s.docs],
-        "facts": [_fact_json(k, v) for k, v in f.scalars().items()],
+        "facts": [_fact_json(k, v, s.role) for k, v in f.scalars().items() if k in shown],
         "supplier_payments": [{"label": p.label, "amount": _fact_json("amount", p.amount),
                                "day": _fact_json("day", p.day), "paid": p.already_paid}
                               for p in f.supplier_payments],
@@ -153,6 +163,8 @@ def _documents_view(s: Session) -> dict:
         "flags": [_flag_json(x, s) for x in stage.integrity],
         "profile": s.profile.to_json() if s.profile else None,
         "profile_source": s.profile_source,
+        "questions": sum(n.required for n in needs.rule_needs(
+            f, {}, s.profile_source, _profile_known(s), s.role, role_conflict(s))),
     }
 
 
@@ -203,6 +215,10 @@ FLAG_OPTIONS: dict[str, list[tuple[str, str, bool, bool]]] = {
     "FREE_EMAIL": [("verify_sender", "Verify the contact by phone first", True, False),
                    ("ask_company_email", "Ask them to write from their company domain", True, False),
                    ("known_contact", "I know this contact personally; it is fine", True, True)],
+    "CURRENCY_MISMATCH": [("same_currency", "The amounts are already in my currency; the label is wrong",
+                           True, False),
+                          ("ask_my_currency", "Ask the sender for documents in my currency", True, False),
+                          ("checked", "I converted the amounts myself in the facts table", True, True)],
     "INJECTION": [("ignore", "Ignore the hidden instruction (SolvOrder already does)", True, False),
                   ("report", "Tell the sender their document contains an AI instruction", True, False)],
 }
@@ -255,11 +271,12 @@ def _version(sig: str, r) -> str:
 
 def _headline(run, case, gap) -> str:
     w, asis = run.winner, run.results["accept-as-is"]
+    deal = "offer" if case.is_buyer else "order"
     if run.no_plan_survives:
-        return ("No way of accepting this order keeps your cash above the reserve. "
+        return (f"No way of accepting this {deal} keeps your cash above the reserve. "
                 "Decline, or ask for one of the changes below.")
     if asis.reserve_ok and not asis.violations:
-        return "You can accept this order as it is: your cash stays above the reserve every day."
+        return f"You can accept this {deal} as it is: your cash stays above the reserve every day."
     if w.plan.id == "decline":
         return "Declining is the only safe choice with the options available."
     return (f"Accepting as-is would push cash below your reserve on day "
@@ -333,6 +350,35 @@ def _currency(s: Session, fallback: str = "USD") -> str:
     return u.currency if u and s.profile_source != "sample" else fallback
 
 
+def _doc_currency(s: Session) -> str | None:
+    """The currency the documents are checked against: the owner's profile
+    currency for their own cases; samples are consistent by construction."""
+    u = _account(s)
+    return u.currency if u and s.profile_source != "sample" else None
+
+
+def _set_role(s: Session, pack_role: str | None = None) -> None:
+    """The owner's side in this deal: a sample's own role; otherwise the profile's
+    role, checked against the documents (a disagreement becomes an intake question)."""
+    u = _account(s)
+    if s.profile_source == "sample":
+        company, email = (s.profile.name if s.profile else ""), ""
+    else:
+        company, email = (u.business, u.company_email) if u else ("", "")
+    s.role_guess = roles.detect_role(s.facts, s.docs, company, email)
+    if s.profile_source == "sample":
+        s.role, s.role_source = s.role_guess.role or pack_role or "seller", "sample"
+    elif u is not None:
+        s.role, s.role_source = u.role, "profile"
+    else:
+        s.role, s.role_source = s.role_guess.role or "seller", (
+            "documents" if s.role_guess.role else "default")
+
+
+def role_conflict(s: Session) -> bool:
+    return bool(s.role_guess.role) and s.role_guess.role != s.role and s.role_source == "profile"
+
+
 def _set_profile(s: Session, sample_profile) -> None:
     """A sample brings its own business. Otherwise keep business facts the owner
     already gave in this session; if none, the example business is only a
@@ -347,10 +393,12 @@ def _set_profile(s: Session, sample_profile) -> None:
         s.profile = replace(s.profile, currency=_currency(s, s.profile.currency))
 
 
-def _ingest(s: Session, docs: list, profile, sample_id: str | None) -> dict:
+def _ingest(s: Session, docs: list, profile, sample_id: str | None,
+            pack_role: str | None = None) -> dict:
     s.docs, s.sample_id, s.resolved = docs, sample_id, {}
     _set_profile(s, profile)
     s.facts, s.mode, s.note = doc_extract.extract_facts(docs)
+    _set_role(s, pack_role)
     s.last, s.approvals, s.active_approval, s.executed = {}, {}, None, None
     s.log.append("extract_fields", "T0", {"documents": [d.filename for d in docs]}, None,
                  f"{len(docs)} document(s) read via {s.mode}")
@@ -387,9 +435,17 @@ def load_sample(req: SampleReq, authorization: str | None = Header(default=None)
     if meta is None:
         raise HTTPException(404, "Unknown sample")
     docs = _sample_docs(meta)
-    profile = case_builder.profile_from_json(
-        json.loads((SAMPLES / req.pack / "profile.json").read_text()))
-    return _ingest(s, docs, profile, req.pack)
+    data = json.loads((SAMPLES / req.pack / "profile.json").read_text())
+    profile = case_builder.profile_from_json(data)
+    view = _ingest(s, docs, profile, req.pack, meta.get("role"))
+    deal = data.get("deal") or {}
+    if deal:  # a buyer sample states its own expected income (not in any document)
+        for k in ("expected_income", "income_days"):
+            if k in deal:
+                setattr(s.facts, k, Fact(str(deal[k]), "PROFILE", "stated by the sample business",
+                                         1.0, True))
+        view = _documents_view(s)
+    return view
 
 
 @app.post("/api/documents/upload")
@@ -418,6 +474,7 @@ async def upload(session_id: str = Form(...), files: list[UploadFile] = File(def
 
 class ManualReq(BaseModel):
     session_id: str
+    role: str | None = None  # seller | buyer, chosen on the manual form
     facts: dict[str, str] = Field(default_factory=dict)
     supplier_payments: list[dict] = Field(default_factory=list)
 
@@ -440,6 +497,9 @@ def manual(req: ManualReq, authorization: str | None = Header(default=None)):
     s.docs, s.facts, s.mode, s.sample_id = [], f, "manual", None
     s.note = "Facts entered by the owner (no AI used)."
     _set_profile(s, None)
+    _set_role(s)
+    if req.role in auth.ROLES:  # the manual form says which side the owner is on
+        s.role, s.role_source = req.role, "owner"
     s.last, s.approvals, s.active_approval, s.executed, s.resolved = {}, {}, None, None, {}
     s.log.append("manual_entry", "T0", {"fields": len(req.facts)}, None, "owner-entered facts")
     return _documents_view(s)
@@ -476,6 +536,25 @@ def companies(req: SessionReq):
             "mode": g["mode"], "note": g["note"], "sources": g.get("sources", [])}
 
 
+class RoleReq(BaseModel):
+    session_id: str
+    role: str
+
+
+@app.post("/api/role")
+def set_role(req: RoleReq):
+    """The owner says which side of this deal they are on (overrides profile and documents)."""
+    s = _session(req.session_id)
+    if req.role not in auth.ROLES:
+        raise HTTPException(400, "Role must be seller or buyer.")
+    if s.facts is None:
+        raise HTTPException(400, "Load a sample or upload documents first.")
+    s.role, s.role_source = req.role, "owner"
+    s.last, s.approvals, s.active_approval, s.executed = {}, {}, None, None
+    s.log.append("set_role", "T1", {"role": req.role}, None, f"owner is the {req.role} in this deal")
+    return _documents_view(s)
+
+
 def _profile_known(s: Session) -> frozenset[str]:
     """Intake keys the owner's company profile already answers."""
     u = _account(s)
@@ -501,30 +580,38 @@ def what_else(req: NeedsReq):
         raise HTTPException(400, "Load a sample or upload documents first.")
     edits = {k: str(v)[:200] for k, v in req.edits.items() if k in Facts.SCALAR_FIELDS}
     known = _profile_known(s)
-    rules = needs.rule_needs(s.facts, edits, s.profile_source, known)
+    rules = needs.rule_needs(s.facts, edits, s.profile_source, known, s.role, role_conflict(s))
     ck = ("needs", hashlib.sha256(json.dumps(
         [{k: f.value for k, f in s.facts.scalars().items()}, edits, s.profile_source, sorted(known),
+         s.role, role_conflict(s),
          [d.doc_id + d.text[:2000] for d in s.docs]], sort_keys=True).encode()).hexdigest())
     if ck not in s.ai_cache:
         mode, note, picked = "rules", "Gemini is not configured: standard checklist.", []
         if gemini_client.gemini_available():
-            known = {**{FACT_LABELS[k]: (edits.get(k) or f.value) for k, f in s.facts.scalars().items()},
+            known_facts = {**{FACT_LABELS[k]: (edits.get(k) or f.value) for k, f in s.facts.scalars().items()
+                              if k in visible_facts(s.role)},
                      "supplier_payments": [f"{p.label}: {p.amount.value} on {p.day.value}"
                                            for p in s.facts.supplier_payments],
-                     "business_facts_given_by_owner": s.profile_source in ("owner", "sample")}
+                     "business_facts_given_by_owner": s.profile_source in ("owner", "sample"),
+                     "owner_role_in_this_deal": s.role}
             if s.profile_source in ("owner", "sample"):
-                known["business"] = s.profile.to_json()
+                known_facts["business"] = s.profile.to_json()
             docs = "\n\n".join(f"=== {d.doc_id} ({d.filename}) ===\n{d.text}" for d in s.docs)
             try:
-                picked = gemini_client.what_else_needed(known, docs or "(no documents: typed by the owner)",
-                                                        list(needs.NEEDS))
+                picked = gemini_client.what_else_needed(known_facts, docs or "(no documents: typed by the owner)",
+                                                        needs.allowed_keys(s.role))
                 mode, note = "gemini", f"Chosen by {gemini_client.backend_label()} for this order."
             except Exception as exc:  # degrade to the checklist, never block
                 note = f"Gemini could not choose the questions ({exc}); standard checklist used."
         s.ai_cache[ck] = (needs.merge(rules, picked, known), mode, note)
         s.log.append("gemini.what_else_needed", "T1", {"keys": len(picked)}, None, f"source: {mode}")
     items, mode, note = s.ai_cache[ck]
-    return {"needs": [n.to_json() for n in items], "mode": mode, "note": note,
+    out = [n.to_json() for n in items]
+    for n in out:
+        if n["key"] == "deal_role":  # quote the documents' evidence in the question
+            n["why"] = f"{s.role_guess.evidence} Your profile says you are usually the {s.role}."
+            n["suggested"] = s.role_guess.role
+    return {"needs": out, "mode": mode, "note": note, "role": s.role,
             "profile_source": s.profile_source,
             "profile": s.profile.to_json() if s.profile else None}
 
@@ -618,7 +705,8 @@ class ResolveReq(BaseModel):
 def resolve_flag(req: ResolveReq):
     """The owner picks one of the suggested actions for a fraud/integrity check."""
     s = _session(req.session_id)
-    stage = doc_extract.to_document_stage(s.facts, s.docs, s.mode, s.note) if s.facts else None
+    stage = doc_extract.to_document_stage(s.facts, s.docs, s.mode, s.note,
+                                          currency=_doc_currency(s), role=s.role) if s.facts else None
     flag = next((f for f in (stage.integrity if stage else []) if f.code == req.code), None)
     if flag is None:
         raise HTTPException(404, "Unknown check")
@@ -672,7 +760,7 @@ def analyze(req: AnalyzeReq):
         profile = replace(profile, opening_cash=Decimal(str(round(req.opening_cash, 2))))
     if req.max_financing_cost is not None:
         profile = replace(profile, max_financing_cost=Decimal(str(round(max(req.max_financing_cost, 0), 2))))
-    built = case_builder.build_case(s.facts, profile, req.edits, req.payment_reading)
+    built = case_builder.build_case(s.facts, profile, req.edits, req.payment_reading, s.role)
     if s.profile_source == "default":  # documents describe the order, not the business
         return {"ok": False, "needs_business": True,
                 "missing": built.missing + [BUSINESS_MISSING]}
@@ -684,7 +772,7 @@ def analyze(req: AnalyzeReq):
         raise HTTPException(400, "Payment day must be between 0 and 365")
 
     stage = doc_extract.to_document_stage(s.facts, s.docs, s.mode, s.note,
-                                          frozenset(req.confirmed), s.resolved)
+                                          frozenset(req.confirmed), s.resolved, _doc_currency(s), s.role)
     # owner edits count as confirmation of that field
     edited_labels = {FACT_LABELS.get(k) for k in req.edits}
     confirmed = frozenset(req.confirmed) | {f.key for f in stage.fields
@@ -713,6 +801,7 @@ def analyze(req: AnalyzeReq):
     return {
         "ok": True,
         "case": {"name": case.name, "currency": profile.currency, "business": profile.name,
+                 "role": case.role, "deal": "offer" if case.is_buyer else "order",
                  "opening_cash": num(case.opening_cash), "reserve": num(case.reserve),
                  "order_value": num(case.order_value), "gross_margin": num(case.gross_margin),
                  "advance_received": num(case.advance_received),
@@ -845,8 +934,11 @@ def _draft_for(s: Session, plan_id: str) -> str:
 
 
 def _messages_for(s: Session, plan_id: str) -> list[dict]:
-    """One engine-drafted message per party the plan needs: the customer (advance or
-    plain acceptance), the supplier (extension) and the lender (financing)."""
+    """One engine-drafted message per party the plan involves. The deal's
+    counterparty always comes first: the customer when the owner sells (an
+    acceptance, or the advance request), the supplier when the owner buys (an
+    acceptance, or the request to pay later). Then the supplier for an extension
+    (seller) and the lender for a loan."""
     from dataclasses import replace
 
     last = _last(s)
@@ -855,34 +947,40 @@ def _messages_for(s: Session, plan_id: str) -> list[dict]:
     if r is None:
         raise HTTPException(404, "Unknown plan")
     p = r.plan
-    parts = []
-    if p.advance_pct > 0 or (not p.supplier_extension and p.financing is None):
-        parts.append(replace(p, supplier_extension=False, financing=None))
-    if p.supplier_extension:
-        parts.append(replace(p, advance_pct=engine.ZERO, financing=None))
+    if case.is_buyer:
+        parts = [("supplier", replace(p, advance_pct=engine.ZERO, financing=None))]
+    else:
+        parts = [("customer", replace(p, supplier_extension=False, financing=None))]
+        if p.supplier_extension:
+            parts.append(("supplier", replace(p, advance_pct=engine.ZERO, financing=None)))
     if p.financing is not None:
-        parts.append(replace(p, advance_pct=engine.ZERO, supplier_extension=False))
+        parts.append(("lender", replace(p, advance_pct=engine.ZERO, supplier_extension=False)))
     out = []
-    for part in parts:
+    for party, part in parts:
         body = agent.draft_message(replace(r, plan=part), case, last["pay_day"], run.min_advance)
-        who, to = _recipient(case, part)
-        out.append({"to_name": who, "to": to, "body": body,
+        who, to = _recipient(s, case, party, part)
+        out.append({"party": party, "to_name": who, "to": to, "body": body,
                     "subject": body.splitlines()[0].removeprefix("Subject:").strip()})
     return out
 
 
-def _recipient(case, plan) -> tuple[str, str]:
-    """(who, mock address) for a single-party plan part -- mirrors agent.draft_message."""
+def _recipient(s: Session, case, party: str, plan) -> tuple[str, str]:
+    """(who, address): the email the documents give for the customer or supplier,
+    else a mock address. The lender has no address in the documents."""
     import re
 
-    if plan.advance_pct > 0 or (not plan.supplier_extension and plan.financing is None):
-        who = case.customer
-    elif plan.financing is None:
-        who = case.supplier or "Supplier"
+    facts = s.facts
+    if party == "customer":
+        who, email = case.customer, facts.customer_email.value if facts else ""
+    elif party == "supplier":
+        who, email = case.supplier or "Supplier", facts.supplier_email.value if facts else ""
     else:
-        who = plan.financing.lender
-    slug = re.sub(r"[^a-z0-9]+", "-", who.lower()).strip("-") or "counterparty"
-    return who, f"accounts@{slug}.example"
+        who, email = plan.financing.lender, ""
+    email = email.strip()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        slug = re.sub(r"[^a-z0-9]+", "-", who.lower()).strip("-") or "counterparty"
+        email = f"accounts@{slug}.example"
+    return who, email
 
 
 @app.post("/api/breakdown")

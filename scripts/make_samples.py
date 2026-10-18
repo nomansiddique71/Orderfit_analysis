@@ -128,6 +128,69 @@ Payee: Kaveri Textile Mills
 Bank: Deccan Co-operative Bank
 Account number: 0098 1123 5567"""
 
+# Padma Garments Ltd (Dhaka, BDT): the same business on both sides of a deal.
+PADMA_SELL_PO = """PURCHASE ORDER
+PO number: RF-3150
+Buyer: Rupsha Fashion House
+Buyer contact: purchase@rupshafashion.example
+Seller: Padma Garments Ltd
+Seller email: accounts@padmagarments.example
+Issue date: Day 0 (order confirmation)
+
+Item 1: 2,000 cotton shirts  BDT 10,00,000
+Item 2: 1,000 polo shirts  BDT 8,00,000
+Total order value: BDT 18,00,000
+
+Delivery required by: day 30
+Payment terms: Net 30 days after delivery
+Late delivery penalty: 1% of order value per week
+Cancellation: none"""
+
+PADMA_SELL_QUOTE = """QUOTATION MF-2210
+Supplier: Meghna Fabrics Ltd
+Email: sales@meghnafabrics.example
+To: Padma Garments Ltd
+Re: Fabric for 3,000 shirts
+
+Payment schedule:
+1. Fabric deposit: BDT 6,00,000 due day 0
+2. Balance before dispatch: BDT 3,00,000 due day 20
+3. Transport: BDT 50,000 due day 30
+
+Payee: Meghna Fabrics Ltd
+Bank: Jamuna Commerce Bank
+Account number: 0112 4470 9935"""
+
+PADMA_BUY_PO = """PURCHASE ORDER
+PO number: PG-0417
+Buyer: Padma Garments Ltd
+Buyer contact: accounts@padmagarments.example
+Seller: Meghna Fabrics Ltd
+Issue date: Day 0 (order confirmation)
+
+Item 1: 4,000 m cotton twill  BDT 5,00,000
+Item 2: 3,000 m poplin  BDT 3,00,000
+Total order value: BDT 8,00,000
+
+Delivery required by: day 25
+Payment terms: as per quotation MF-2245"""
+
+PADMA_BUY_QUOTE = """QUOTATION MF-2245
+Supplier: Meghna Fabrics Ltd
+Email: sales@meghnafabrics.example
+To: Padma Garments Ltd
+Re: 4,000 m cotton twill and 3,000 m poplin
+
+Payment schedule:
+1. Advance: BDT 4,00,000 due day 0
+2. Balance on delivery: BDT 3,50,000 due day 25
+3. Freight: BDT 50,000 due day 25
+
+Payee: Meghna Fabrics Ltd
+Bank: Jamuna Commerce Bank
+Account number: 0112 4470 9935
+Prices valid for 10 days."""
+
 # ---------------------------------------------------------------- profiles
 
 
@@ -170,6 +233,30 @@ LOTUS_PROFILE = {
                 "min_principal": "50000", "max_principal": "300000"}],
 }
 
+PADMA_PROFILE = {
+    "name": "Padma Garments Ltd", "currency": "BDT",
+    "opening_cash": "1000000", "reserve": "300000", "max_financing_cost": "40000",
+    "obligations": [
+        {"day": 10, "amount": "-100000", "label": "Factory rent", "kind": "obligation",
+         "counterparty": "Landlord"},
+        {"day": 15, "amount": "-350000", "label": "Payroll", "kind": "payroll", "counterparty": "Staff"},
+        {"day": 28, "amount": "250000", "label": "Receivable (invoice 0981)", "kind": "receivable",
+         "counterparty": "Aarong Retail", "due_day": -2},
+        {"day": 40, "amount": "-100000", "label": "Factory rent", "kind": "obligation",
+         "counterparty": "Landlord"},
+        {"day": 45, "amount": "-350000", "label": "Payroll", "kind": "payroll", "counterparty": "Staff"},
+    ],
+    "offers": [{"id": "JCB-1", "lender": "Jamuna Commerce Bank", "principal": "500000",
+                "fee_pct": "0", "origination": "5000", "draw_day": 0, "repay_day": 90,
+                "expires_day": 10, "monthly_rate_pct": "1.25",
+                "conditions": "Working-capital line 2,00,000-10,00,000; 1.25% per month + 5,000 fee.",
+                "min_principal": "200000", "max_principal": "1000000"}],
+}
+# A buyer deal's income is the owner's own estimate, not in any document: the
+# sample business states it so the case runs without questions.
+PADMA_BUYER_PROFILE = {**PADMA_PROFILE,
+                       "deal": {"expected_income": "1200000", "income_days": "30"}}
+
 PACKS = [
     {"id": "clean", "title": "Clean order", "badge": "Risk",
      "subtitle": "Acme Trading Co. · USD 30,000 order from Meridian Retail",
@@ -210,6 +297,25 @@ PACKS = [
                   "Cancellation clause and money at risk"],
      "profile": "lotus",
      "files": {"purchase_order.pdf": LOTUS_PO, "supplier_quote.pdf": LOTUS_QUOTE}},
+    {"id": "seller_bdt", "title": "You are the seller (BDT)", "badge": "Role", "role": "seller",
+     "subtitle": "Padma Garments · BDT 18,00,000 order from Rupsha Fashion House",
+     "story": "A customer orders 3,000 shirts. Padma must pay its fabric supplier long before "
+              "the customer pays. After approval, SolvOrder notifies the customer.",
+     "look_for": ["Role detected from the PO: Padma is the seller",
+                  "Amounts in taka with lakh grouping (18,00,000)",
+                  "Notify button addresses the customer, Rupsha Fashion House"],
+     "profile": "padma",
+     "files": {"purchase_order.pdf": PADMA_SELL_PO, "supplier_quote.pdf": PADMA_SELL_QUOTE}},
+    {"id": "buyer_bdt", "title": "You are the buyer (BDT)", "badge": "Role", "role": "buyer",
+     "subtitle": "Padma Garments · BDT 8,00,000 fabric offer from Meghna Fabrics",
+     "story": "A supplier offers fabric. Padma pays now and earns from the garments later. "
+              "SolvOrder checks the offer against Padma's cash, and after approval notifies the supplier.",
+     "look_for": ["Role detected from the PO: Padma is the buyer",
+                  "No 'ask the customer for an advance' plans: there is no customer in this deal",
+                  "Ask the supplier to be paid later, or borrow the smallest safe amount",
+                  "Notify button addresses the supplier, Meghna Fabrics"],
+     "profile": "padma_buyer",
+     "files": {"purchase_order.pdf": PADMA_BUY_PO, "supplier_quote.pdf": PADMA_BUY_QUOTE}},
 ]
 
 
@@ -233,7 +339,8 @@ def write_pdf(path: Path, text: str) -> None:
 
 
 def main() -> None:
-    profiles = {"acme": acme_profile(), "lotus": LOTUS_PROFILE}
+    profiles = {"acme": acme_profile(), "lotus": LOTUS_PROFILE, "padma": PADMA_PROFILE,
+                "padma_buyer": PADMA_BUYER_PROFILE}
     OUT.mkdir(exist_ok=True)
     index = []
     for pack in PACKS:

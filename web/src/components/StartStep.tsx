@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, FileText, FileUp, Keyboard, Plus, ShieldAlert, Sparkles, Trash2, Upload } from "lucide-react";
-import { get, post, upload, type DocView, type Pack } from "../api";
+import { get, post, upload, type DocView, type Pack, type Role } from "../api";
 import { BusyOverlay, Callout, Card, LoadingButton, SectionTitle } from "./ui";
 
 const BADGE: Record<string, string> = {
@@ -8,8 +8,8 @@ const BADGE: Record<string, string> = {
   Security: "bg-violet-100 text-violet-800", Integrity: "bg-amber-100 text-amber-800",
 };
 
-export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
-  onLoaded: (v: DocView) => void; onHowItWorks: () => void; aiOn: boolean;
+export function StartStep({ onLoaded, onHowItWorks, aiOn, role, company }: {
+  onLoaded: (v: DocView) => void; onHowItWorks: () => void; aiOn: boolean; role: Role; company: string;
 }) {
   const [packs, setPacks] = useState<Pack[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -135,7 +135,8 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
           {!manual ? (
             <button className="btn-secondary w-full" onClick={() => setManual(true)}><Plus className="h-4 w-4" /> Open the manual form</button>
           ) : (
-            <ManualForm busy={!!busy} loading={busy === "manual"} onSubmit={(facts, pays) => run("manual", () => post<DocView>("/api/documents/manual", { facts, supplier_payments: pays }))} />
+            <ManualForm busy={!!busy} loading={busy === "manual"} role={role} company={company}
+              onSubmit={(facts, pays, r) => run("manual", () => post<DocView>("/api/documents/manual", { facts, supplier_payments: pays, role: r }))} />
           )}
         </Card>
       </section>
@@ -143,11 +144,24 @@ export function StartStep({ onLoaded, onHowItWorks, aiOn }: {
   );
 }
 
-function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boolean; onSubmit: (f: Record<string, string>, p: { label: string; amount: string; day: number; paid: boolean }[]) => void }) {
+type Pay = { label: string; amount: string; day: number; paid: boolean };
+const SELLER_FIELDS = ["customer_name", "order_ref", "order_value", "delivery_day", "payment_terms_days", "payment_terms_basis",
+  "supplier_name", "late_penalty_pct_per_week", "advance_received", "customer_email", "supplier_email"];
+const BUYER_FIELDS = ["customer_name", "order_ref", "order_value", "delivery_day", "supplier_name", "supplier_email", "expected_income", "income_days"];
+
+function ManualForm({ busy, loading, onSubmit, role: initialRole, company }: {
+  busy: boolean; loading: boolean; role: Role; company: string;
+  onSubmit: (f: Record<string, string>, p: Pay[], role: Role) => void;
+}) {
+  const [role, setRole] = useState<Role>(initialRole);
   const [f, setF] = useState<Record<string, string>>({
-    customer_name: "", order_ref: "", order_value: "", delivery_day: "30", payment_terms_days: "30",
+    customer_name: initialRole === "buyer" ? company : "", order_ref: "", order_value: "", delivery_day: "30", payment_terms_days: "30",
     payment_terms_basis: "after_delivery", supplier_name: "", late_penalty_pct_per_week: "", advance_received: "", customer_email: "", supplier_email: "",
+    expected_income: "", income_days: "15",
   });
+  const switchRole = (r: Role) => { setRole(r); setF({ ...f, customer_name: r === "buyer" ? company : "" }); };
+  const keep = role === "buyer" ? BUYER_FIELDS : SELLER_FIELDS;
+  const facts = () => Object.fromEntries(Object.entries(f).filter(([k]) => keep.includes(k)));
   const [pays, setPays] = useState([{ label: "Supplier deposit", amount: "", day: 0, paid: false }]);
   const field = (k: string, label: string, ph = "") => (
     <label className="block"><span className="label">{label}</span>
@@ -155,6 +169,28 @@ function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boole
   );
   return (
     <div className="space-y-3">
+      <div>
+        <div className="label mb-1">In this deal I am the…</div>
+        <div className="grid grid-cols-2 gap-2">
+          {([["seller", "Seller", "A customer ordered from me"], ["buyer", "Buyer", "A supplier offered me goods"]] as [Role, string, string][]).map(([r, t, d]) => (
+            <button key={r} type="button" onClick={() => switchRole(r)} className={`rounded-xl border-2 px-3 py-2 text-left ${role === r ? "border-brand-500 bg-brand-50" : "border-slate-200"}`}>
+              <div className="text-sm font-bold">{t}</div><div className="text-xs text-slate-500">{d}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      {role === "buyer" ? (
+      <div className="grid grid-cols-2 gap-3">
+        {field("supplier_name", "Supplier", "Meghna Fabrics Ltd")}
+        {field("supplier_email", "Supplier email", "sales@meghnafabrics.example")}
+        {field("order_ref", "Offer / quotation reference", "Q-2045")}
+        {field("order_value", "Purchase total (what you pay)", "800000")}
+        {field("delivery_day", "Goods arrive by day", "30")}
+        {field("customer_name", "Buyer (your company)", company || "Your company")}
+        {field("expected_income", "Income you expect from the goods", "0 if none")}
+        {field("income_days", "Days after arrival that income comes", "15")}
+      </div>
+      ) : (
       <div className="grid grid-cols-2 gap-3">
         {field("customer_name", "Customer", "Meridian Retail")}
         {field("order_ref", "Order reference", "PO-1001")}
@@ -171,6 +207,7 @@ function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boole
         {field("late_penalty_pct_per_week", "Late penalty % / week", "1%")}
         {field("advance_received", "Advance the customer already paid you", "0 if none")}
       </div>
+      )}
       <div>
         <div className="label mb-1">What you pay the supplier (amount, day, already paid?)</div>
         {pays.map((p, i) => (
@@ -184,7 +221,7 @@ function ManualForm({ busy, loading, onSubmit }: { busy: boolean; loading: boole
         ))}
         <button className="text-sm font-semibold text-brand-700" onClick={() => setPays([...pays, { label: "Payment", amount: "", day: 0, paid: false }])}>+ Add payment</button>
       </div>
-      <LoadingButton loading={loading} loadingText="Checking…" disabled={busy} className="btn-primary w-full" onClick={() => onSubmit(f, pays)}>Use these facts</LoadingButton>
+      <LoadingButton loading={loading} loadingText="Checking…" disabled={busy} className="btn-primary w-full" onClick={() => onSubmit(facts(), pays, role)}>Use these facts</LoadingButton>
       <p className="text-xs text-slate-500">Your cash position, reserve and lenders come from the business profile, which you can edit on the next screen.</p>
     </div>
   );

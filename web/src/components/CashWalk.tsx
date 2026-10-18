@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Minus, Plus, Equal, Route } from "lucide-react";
 import type { Analysis, CashWalk as Walk } from "../api";
-import { money } from "../format";
+import { money, words } from "../format";
 import { Card, SectionTitle, Segmented } from "./ui";
 
 /** One plan's path to its lowest point, as a short sum the owner can check by hand. */
@@ -42,14 +42,18 @@ export function CashWalk({ a }: { a: Analysis }) {
   const [ledger, setLedger] = useState<"asis" | "recommended">(same ? "asis" : "recommended");
   const rows = a.walk[ledger].rows;
   const paid = a.case.advance_received > 0;
+  const w = words(a.case.role);
+  const buyer = a.case.role === "buyer";
 
   const story = [
     `You have ${money(asis.opening, cur)} today and promised yourself never to go below ${money(asis.reserve, cur)}.`,
     `If you accept as-is, you pay ${Object.entries(asis.out_until_low).map(([g, v]) => `${g.toLowerCase()} ${money(v, cur)}`).join(", ")} before day ${asis.low_day}`
-      + `, but the customer only pays ${money(a.case.balance_due, cur)} on day ${a.case.pay_day}`
+      + (buyer
+        ? (a.case.order_value > 0 ? `, and the income from the goods (${money(a.case.order_value, cur)}) only arrives on day ${a.case.pay_day}` : ", and you expect no income back from the goods within the plan")
+        : `, but the customer only pays ${money(a.case.balance_due, cur)} on day ${a.case.pay_day}`)
       + (paid ? ` (they already paid ${money(a.case.advance_received, cur)} in advance, which is in today's cash)` : "") + ".",
     asis.headroom >= 0
-      ? `Even at the tightest moment (day ${asis.low_day}) you keep ${money(asis.headroom, cur)} above the reserve, so the order is affordable as it is.`
+      ? `Even at the tightest moment (day ${asis.low_day}) you keep ${money(asis.headroom, cur)} above the reserve, so the ${w.deal} is affordable as it is.`
       : `At the tightest moment (day ${asis.low_day}) cash would be ${money(asis.low, cur)}, ${money(-asis.headroom, cur)} below your reserve. That is why SolvOrder does not accept it as-is.`,
     same ? "" : declined
       ? "No plan keeps you above the reserve, so SolvOrder recommends declining (or changing the terms shown on the options screen)."
@@ -59,12 +63,12 @@ export function CashWalk({ a }: { a: Analysis }) {
   return (
     <Card className="p-6">
       <SectionTitle icon={<Route className="h-5 w-5" />} title="How SolvOrder reached this decision"
-        sub="Cash today, minus payroll, bills and the order's costs, plus what comes in, gives your lowest cash point. That point is compared with your reserve." />
+        sub={`Cash today, minus payroll, bills and the ${w.deal}'s costs, plus what comes in, gives your lowest cash point. That point is compared with your reserve.`} />
       <ol className="mb-5 space-y-1.5 text-sm text-slate-700">
         {story.map((t, i) => <li key={i} className="flex gap-2"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">{i + 1}</span>{t}</li>)}
       </ol>
       <div className={`grid gap-4 ${same ? "" : "md:grid-cols-2"}`}>
-        <WalkColumn w={asis} cur={cur} title="If you accept the order as it is" tone={asis.headroom >= 0 ? "good" : "bad"} />
+        <WalkColumn w={asis} cur={cur} title={`If you accept the ${w.deal} as it is`} tone={asis.headroom >= 0 ? "good" : "bad"} />
         {!same && <WalkColumn w={recommended} cur={cur} title={declined ? "If you decline" : "With the recommended plan"} tone={recommended.headroom >= 0 ? "good" : "bad"} />}
       </div>
       <details className="mt-5">

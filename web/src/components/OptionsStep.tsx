@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Banknote, Bot, CheckCircle2, ListTree, FlaskConical, Grid3x3, HandCoins, MessageSquare, Scale, Send, SlidersHorizontal, XCircle } from "lucide-react";
 import { post, type Analysis, type Plan, type ScenarioResult } from "../api";
-import { money, planTitle } from "../format";
+import { money, planTitle, words } from "../format";
 import { BreakdownModal } from "./Breakdown";
 import { CashChart } from "./CashChart";
 import { Callout, Card, LoadingButton, Pill, SectionTitle, Segmented, Spinner, Updating } from "./ui";
@@ -52,6 +52,7 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
   onNext: () => void;
 }) {
   const cur = a.case.currency;
+  const w = words(a.case.role);
   const winner = a.plans.find((p) => p.id === a.verdict.winner)!;
   const feasible = a.plans.filter((p) => p.feasible && p.id !== winner.id && p.id !== "decline");
   const failing = a.plans.filter((p) => !p.feasible);
@@ -67,9 +68,9 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
         <div className="grid gap-5 lg:grid-cols-3">
           <div><div className="label mb-2">What matters most?</div>
             <Segmented value={controls.priority} options={PRIORITIES} onChange={(v) => setControls({ priority: v, tie: null })} /></div>
-          <div><div className="label mb-2">How late might the customer pay?</div>
+          <div><div className="label mb-2">How late might {w.payer} {w.pays === "pays" ? "pay" : "arrive"}?</div>
             <Segmented value={controls.stress} options={[15, 30, 60, 90].map((d) => ({ value: d, label: `${d} days` }))} onChange={(v) => setControls({ stress: v })} /></div>
-          <div><div className="label mb-2">What if the customer pays on day… <b className="text-slate-900">{controls.payDay ?? a.case.pay_day}</b></div>
+          <div><div className="label mb-2">What if {w.payer} {w.pays} on day… <b className="text-slate-900">{controls.payDay ?? a.case.pay_day}</b></div>
             <input type="range" min={Math.max(0, a.case.delivery_day)} max={Math.max(120, a.case.document_pay_day + 30)} value={controls.payDay ?? a.case.pay_day}
               onChange={(e) => setControls({ payDay: Number(e.target.value) })} className="w-full accent-teal-600" />
             <div className="flex justify-between text-xs text-slate-500"><span>Documents say day {a.case.document_pay_day}</span>
@@ -125,7 +126,7 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="p-6">
-          <SectionTitle icon={<Grid3x3 className="h-5 w-5" />} title="Stress test: what if the customer pays late?" sub="✓ = your reserve still holds if the customer pays that many days late." />
+          <SectionTitle icon={<Grid3x3 className="h-5 w-5" />} title={`Stress test: what if ${w.paysLate}?`} sub={`✓ = your reserve still holds if ${w.payer} ${w.pays} that many days late.`} />
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-slate-500"><tr><th className="py-2">Plan</th>{[15, 30, 60, 90].map((d) => <th key={d} className="text-center">+{d}d</th>)}</tr></thead>
@@ -148,7 +149,7 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
               <div key={l.offer} className="rounded-xl border border-slate-200 p-4">
                 <div className="flex items-center gap-2 font-semibold"><Banknote className="h-4 w-4 text-brand-700" />{l.lender}<span className="text-xs font-normal text-slate-500">{l.terms}</span></div>
                 {l.principal !== null
-                  ? <p className="mt-1 text-sm">Borrow <b>{money(l.principal, cur)}</b> (cost <b>{money(l.cost, cur)}</b>). That keeps your reserve even if the customer pays {controls.stress} days late.</p>
+                  ? <p className="mt-1 text-sm">Borrow <b>{money(l.principal, cur)}</b> (cost <b>{money(l.cost, cur)}</b>). That keeps your reserve even if {w.payer} {w.pays} {controls.stress} days late.</p>
                   : <p className="mt-1 text-sm text-rose-700">No amount between {money(l.min, cur)} and {money(l.max, cur)} survives a {controls.stress}-day late payment.</p>}
               </div>
             ))}
@@ -157,7 +158,7 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
           {a.sensitivity.rows.length > 0 && (
             <div className="mt-5">
               <div className="label mb-1">Does the answer change with the payment date?</div>
-              <p className="text-sm text-slate-600">{a.sensitivity.flip_day ? <>Yes. The best plan changes if the customer pays on <b>day {a.sensitivity.flip_day}</b> or later.</> : "No: the same plan wins for every payment day from 40 to 90."}</p>
+              <p className="text-sm text-slate-600">{a.sensitivity.flip_day ? <>Yes. The best plan changes if {w.payer} {w.pays} on <b>day {a.sensitivity.flip_day}</b> or later.</> : "No: the same plan wins for every payment day from 40 to 90."}</p>
             </div>
           )}
         </Card>

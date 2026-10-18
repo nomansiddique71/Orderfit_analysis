@@ -44,6 +44,16 @@ class BusinessProfile:
         }
 
 
+def _zero_amount(text: str):
+    """'0', 'none', 'nil' -> an amount of 0 (parse_amount ignores zero-only text)."""
+    from docparse import ParsedAmount
+
+    t = text.strip().lower()
+    if t in ("0", "0.0", "none", "nil", "no", "zero", "-"):
+        return ParsedAmount(D(0), text)
+    return None
+
+
 def profile_from_json(data: dict) -> BusinessProfile:
     """Validated profile from JSON (sample packs or the owner's edits)."""
     def dec(v, name):
@@ -89,26 +99,43 @@ class BuildResult:
 
 
 def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None,
-               payment_reading: str | None = None) -> BuildResult:
+               payment_reading: str | None = None, role: str = "seller") -> BuildResult:
     """edits: owner corrections keyed by fact name, plus optional
-    'supplier_payments': [{"label", "amount", "day"}] replacing the extracted list."""
+    'supplier_payments': [{"label", "amount", "day"}] replacing the extracted list.
+
+    role "buyer": the deal is a supplier's offer. Costs are the supplier payments;
+    the income is what the owner expects to earn from the goods ('expected_income',
+    may be 0) arriving 'income_days' after delivery. Customer advances and the
+    customer's payment terms do not apply."""
     edits = edits or {}
+    buyer = role == "buyer"
 
     def val(name: str) -> str:
         return str(edits[name]) if name in edits else getattr(facts, name).value
 
     missing, assumptions = [], []
-    order_value = parse_amount(val("order_value"))
     delivery = parse_day(val("delivery_day"))
-    terms = parse_day(val("payment_terms_days"))
-    if order_value is None:
-        missing.append("Order value")
+    if buyer:
+        income_text = (val("expected_income") or "").strip()
+        order_value = (parse_amount(income_text) or _zero_amount(income_text)) if income_text else None
+        terms = parse_day(val("income_days")) if (val("income_days") or "").strip() else None
+        if terms is None and order_value is not None and order_value.value == 0:
+            terms = 0  # no income: its day does not matter
+        if order_value is None:
+            missing.append("Income you expect from these goods (0 if none)")
+        if terms is None:
+            missing.append("Days after delivery that income arrives")
+    else:
+        order_value = parse_amount(val("order_value"))
+        terms = parse_day(val("payment_terms_days"))
+        if order_value is None:
+            missing.append("Order value")
+        if terms is None:
+            missing.append("Customer payment terms (days)")
     if delivery is None:
-        missing.append("Delivery day")
-    if terms is None:
-        missing.append("Customer payment terms (days)")
+        missing.append("Goods arrive by (day)" if buyer else "Delivery day")
 
-    advance_text = (val("advance_received") or "").strip()
+    advance_text = "" if buyer else (val("advance_received") or "").strip()
     advance = parse_amount(advance_text) if advance_text else None
     if advance_text and advance is None:
         missing.append("Advance already received (not a readable amount)")
@@ -139,7 +166,7 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
     if missing:
         return BuildResult(None, None, missing)
 
-    basis = (val("payment_terms_basis") or "unspecified").strip().lower()
+    basis = "after_delivery" if buyer else (val("payment_terms_basis") or "unspecified").strip().lower()
     readings = {}
     if basis in ("after_delivery", "after_invoice"):
         pay_day = delivery + terms
@@ -168,10 +195,11 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
             tied_to_delivery=day == delivery))
     assumptions.append(f"A supplier extension, if asked for, moves supplier payments due by "
                        f"delivery to day {delivery + EXTENSION_DAYS_AFTER_DELIVERY}.")
-    penalty = parse_percent(val("late_penalty_pct_per_week") or "") or D(0)
+    penalty = D(0) if buyer else parse_percent(val("late_penalty_pct_per_week") or "") or D(0)
 
-    customer = (val("customer_name") or "Customer").strip()
-    ref = (val("order_ref") or "the order").strip()
+    customer = ("Your sales of the goods" if buyer
+                else (val("customer_name") or "Customer").strip())
+    ref = (val("order_ref") or ("the offer" if buyer else "the order")).strip()
     case = Case(
         name=f"{profile.name} -- {ref} ({customer})",
         opening_cash=profile.opening_cash, reserve=profile.reserve,
@@ -180,7 +208,12 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
         financing_offers=tuple(profile.offers), max_financing_cost=profile.max_financing_cost,
         supplier=supplier, late_penalty_pct_per_week=penalty, customer=customer, order_ref=ref,
         advance_received=advance.value if advance else D(0), costs_already_paid=already_paid,
-        currency=profile.currency)
+        currency=profile.currency, role=role)
+    if buyer:
+        assumptions.append(
+            f"You are the buyer: you pay {supplier} {sum(a for _, a, _ in payments) + already_paid:,.0f} "
+            + (f"and expect {order_value.value:,.0f} from the goods on day {pay_day}."
+               if order_value.value else "and expect no income from these goods within the plan."))
     if advance:
         assumptions.append(f"The customer already paid {advance.value:,.0f} in advance; it is "
                            f"already in today's cash, so they still owe {case.balance_due:,.0f}.")

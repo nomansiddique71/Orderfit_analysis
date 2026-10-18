@@ -25,8 +25,11 @@ export interface DocView {
   line_items: { description: string; amount: string; source: string }[];
   bank_details: { source: string; payee: string; bank: string; account: string; verified: boolean }[];
   flags: Flag[]; profile: Profile | null; profile_source: "sample" | "owner" | "example" | "default";
+  role: Role; role_source: "profile" | "documents" | "owner" | "sample" | "default";
+  role_guess: { role: Role | null; evidence: string }; currency: string;
+  questions: number; // required intake questions still open
 }
-export interface Need { key: string; question: string; why: string; widget: string; source: "gemini" | "rules"; required: boolean }
+export interface Need { key: string; question: string; why: string; widget: string; source: "gemini" | "rules"; required: boolean; suggested?: Role | null }
 export interface NeedsView { needs: Need[]; mode: "gemini" | "rules"; note: string; profile_source: string; profile: Profile | null }
 export interface Tolerance {
   kind: "never_pays_safe" | "fails_on_time" | "days"; days: number | null; label: string;
@@ -45,6 +48,7 @@ export interface Analysis {
   ok: boolean; missing?: string[]; needs_business?: boolean;
   case: {
     name: string; currency: string; business: string; opening_cash: number; reserve: number;
+    role: Role; deal: "order" | "offer";
     order_value: number; gross_margin: number; delivery_day: number;
     advance_received: number; balance_due: number; costs_already_paid: number; customer: string; supplier: string;
     order_ref: string; pay_day: number; document_pay_day: number; max_financing_cost: number;

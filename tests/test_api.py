@@ -33,7 +33,7 @@ def _analyze(sid, **kw):
 def test_health_and_samples():
     assert client.get("/api/health").json()["ok"]
     packs = client.get("/api/samples").json()
-    assert {p["id"] for p in packs} == {"clean", "fraud", "injection", "ambiguous"}
+    assert {p["id"] for p in packs} == {"clean", "fraud", "injection", "ambiguous", "seller_bdt", "buyer_bdt"}
     pdf = client.get("/api/samples/clean/purchase_order.pdf")
     assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
     assert client.get("/api/samples/clean/..%2Fprofile.json").status_code == 404

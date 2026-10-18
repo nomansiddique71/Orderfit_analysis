@@ -57,9 +57,14 @@ def _doc_kind(docs: dict[str, Document], doc_id: str) -> str:
     return d.kind if d else "other"
 
 
-def check_integrity(facts: Facts, docs: list[Document]) -> list[IntegrityFlag]:
+def check_integrity(facts: Facts, docs: list[Document],
+                    currency: str | None = None) -> list[IntegrityFlag]:
+    """currency: the owner's profile currency; documents in another currency are
+    flagged (SolvOrder never converts)."""
     by_id = {d.doc_id: d for d in docs}
     flags: list[IntegrityFlag] = []
+    if currency:
+        flags += _currency_checks(facts, currency)
     flags += _bank_checks(facts, by_id)
     flags += _amount_checks(facts, by_id)
     flags += _terms_checks(facts, by_id)
@@ -76,6 +81,22 @@ def check_integrity(facts: Facts, docs: list[Document]) -> list[IntegrityFlag]:
             f"treated as data: the instruction was ignored and the verdict is unchanged.",
             [doc_id], blocks_execution=False, category="security"))
     return flags
+
+
+def _currency_checks(facts: Facts, currency: str) -> list[IntegrityFlag]:
+    from docparse import currency_of
+
+    amounts = [facts.order_value, facts.invoice_amount] + [p.amount for p in facts.supplier_payments]
+    for f in amounts:
+        found = currency_of(f.value) or currency_of(f.span)
+        if found and found != currency:
+            return [IntegrityFlag(
+                "CURRENCY_MISMATCH", "warning", f"Documents are in {found}, your business runs in {currency}",
+                f"'{f.span or f.value}' is in {found}, but your company profile says {currency}. "
+                f"SolvOrder never converts currencies: every amount is used as written and shown "
+                f"in {currency}. Confirm the amounts are right for your business before you rely "
+                f"on the result.", [f.source], blocks_execution=False, category="integrity")]
+    return []
 
 
 # ------------------------------------------------------------------ fraud

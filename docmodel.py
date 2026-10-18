@@ -80,6 +80,10 @@ class Facts:
     advance_received: Fact = field(default_factory=lambda: Fact(""))  # customer advance already paid
     customer_email: Fact = field(default_factory=lambda: Fact(""))
     supplier_email: Fact = field(default_factory=lambda: Fact(""))
+    # Buyer deals only (the owner buys from a supplier): what the owner expects to
+    # earn from the goods and when. Given by the owner, never read from documents.
+    expected_income: Fact = field(default_factory=lambda: Fact(""))
+    income_days: Fact = field(default_factory=lambda: Fact(""))
     supplier_payments: list[SupplierPayment] = field(default_factory=list)
     line_items: list[LineItem] = field(default_factory=list)
     bank_details: list[BankDetail] = field(default_factory=list)
@@ -90,6 +94,7 @@ class Facts:
         "customer_name", "order_ref", "order_value", "delivery_day", "payment_terms_days",
         "payment_terms_basis", "late_penalty_pct_per_week", "cancellation_clause",
         "supplier_name", "invoice_amount", "advance_received", "customer_email", "supplier_email",
+        "expected_income", "income_days",
     )
 
     def scalars(self) -> dict[str, Fact]:
@@ -111,7 +116,28 @@ FACT_LABELS = {
     "advance_received": "Advance already received from the customer",
     "customer_email": "Customer email",
     "supplier_email": "Supplier email",
+    "expected_income": "Income you expect from these goods",
+    "income_days": "Days after delivery that income arrives",
 }
+
+# Facts that only make sense for one side of a deal (hidden for the other).
+SELLER_ONLY = {"payment_terms_days", "payment_terms_basis", "late_penalty_pct_per_week",
+               "advance_received", "expected_income", "income_days"}
+BUYER_ONLY = {"expected_income", "income_days"}
+BUYER_HIDDEN = SELLER_ONLY - BUYER_ONLY
+# Labels that read differently when the owner is the buyer.
+BUYER_LABELS = {"customer_name": "Buyer (you)", "order_value": "Purchase total (what you pay)",
+                "order_ref": "Offer / order reference", "delivery_day": "Goods arrive by (day)",
+                "customer_email": "Your email on the documents"}
+
+
+def fact_label(name: str, role: str = "seller") -> str:
+    return (BUYER_LABELS.get(name) if role == "buyer" else None) or FACT_LABELS.get(name, name)
+
+
+def visible_facts(role: str) -> set[str]:
+    hidden = BUYER_HIDDEN if role == "buyer" else BUYER_ONLY
+    return set(Facts.SCALAR_FIELDS) - hidden
 
 # Facts that change a dated cash movement or a hard constraint: a
 # low-confidence or unverified value here makes the result provisional.

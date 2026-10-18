@@ -164,6 +164,20 @@ class Case:
     advance_received: Decimal = D("0")
     costs_already_paid: Decimal = D("0")
     currency: str = "USD"  # used only in human-readable text (drafts)
+    # seller: a customer's order -- income is the customer's payment, a customer
+    #         advance is one of the levers.
+    # buyer:  a supplier's offer -- costs are what we pay the supplier, income is
+    #         what the owner expects to earn from the goods (may be 0); there is no
+    #         customer to ask for an advance, so advance plans are not generated.
+    role: str = "seller"
+
+    @property
+    def is_buyer(self) -> bool:
+        return self.role == "buyer"
+
+    @property
+    def income_label(self) -> str:
+        return "Income from the goods" if self.is_buyer else f"Customer payment ({self.order_ref})"
 
     @property
     def balance_due(self) -> Decimal:
@@ -281,10 +295,10 @@ def plan_movements(case: Case, plan: Plan, customer_payment_day: int | None,
         if scenario.payment_fraction != 1:
             due = money(due * scenario.payment_fraction)
         due -= late_delivery_penalty(case, scenario.supplier_delay_days)
-        out.append(Movement(customer_payment_day + scenario.supplier_delay_days, max(due, ZERO),
-                 f"Customer payment ({case.order_ref})"
-                 + (" -- balance after advance" if advance else ""),
-                 "order_revenue", case.customer))
+        if due > 0 or not case.is_buyer:  # a buyer expecting no income has no income row
+            out.append(Movement(customer_payment_day + scenario.supplier_delay_days, max(due, ZERO),
+                                case.income_label + (" -- balance after advance" if advance else ""),
+                                "order_revenue", case.customer))
     if advance > 0:
         out.append(
             Movement(0, advance,
@@ -560,9 +574,10 @@ def enumerate_plans(case: Case) -> list[Plan]:
     catalogue stays small; otherwise swap in an integer-programming library --
     the contract (input typed facts, output ranked plans) does not change.
     """
-    plans = [Plan("decline", "Decline the order", ZERO, False, None)]
+    plans = [Plan("decline", "Decline the offer" if case.is_buyer else "Decline the order",
+                  ZERO, False, None)]
     for pct, ext, offer in product(
-        (D("0"), D("0.25"), D("0.50")),
+        (D("0"),) if case.is_buyer else (D("0"), D("0.25"), D("0.50")),
         (False, True),
         (None, *eligible_offers(case)),
     ):
@@ -631,7 +646,10 @@ def minimum_advance(case: Case, customer_payment_day: int, stress_delays: list[i
                     step_pct: int = 5, require_robust: bool = True
                     ) -> tuple[Decimal, SimulationResult] | None:
     """Smallest customer advance (as-is otherwise) that is feasible AND robust
-    (or merely feasible on time, with require_robust=False)."""
+    (or merely feasible on time, with require_robust=False). None for a buyer:
+    there is no customer to ask."""
+    if case.is_buyer:
+        return None
     pct = D(step_pct) / 100
     while pct <= 1:
         plan = Plan(f"minadv{int(pct * 100)}", f"Accept with {pct * 100:.0f}% advance",

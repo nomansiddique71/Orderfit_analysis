@@ -107,3 +107,16 @@ def normalise_account(text: str) -> str:
 def mask_account(text: str) -> str:
     n = normalise_account(text)
     return ("****" + n[-4:]) if len(n) > 4 else n
+
+
+# Currency markers as they appear in documents -> ISO code.
+_CURRENCY_RE = re.compile(r"(?<![A-Za-z])(USD|US\$|INR|Rs\.?|BDT|Tk\.?|GBP|EUR)(?![A-Za-z])|([$₹৳£€])")
+_CURRENCY_CODES = {"usd": "USD", "us$": "USD", "$": "USD", "inr": "INR", "rs": "INR", "rs.": "INR",
+                   "₹": "INR", "bdt": "BDT", "tk": "BDT", "tk.": "BDT", "৳": "BDT", "gbp": "GBP",
+                   "£": "GBP", "eur": "EUR", "€": "EUR"}
+
+
+def currency_of(text: str) -> str | None:
+    """ISO code of the first currency marker in the text, or None."""
+    m = _CURRENCY_RE.search(text or "")
+    return _CURRENCY_CODES.get((m.group(1) or m.group(2)).lower()) if m else None

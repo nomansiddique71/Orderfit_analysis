@@ -275,7 +275,7 @@ def raise_alerts(case: Case, as_is: SimulationResult, winner: SimulationResult,
     if as_is.first_breach_day is not None:
         alerts.append(Alert(
             "reserve_breach", as_is.first_breach_day,
-            f"Accepting the order as-is breaches the {case.reserve:,.0f} reserve on day "
+            f"Accepting the {'offer' if case.is_buyer else 'order'} as-is breaches the {case.reserve:,.0f} reserve on day "
             f"{as_is.first_breach_day} (intra-day low {as_is.low_path[as_is.first_breach_day]:,.0f}); "
             f"low point {as_is.min_balance:,.0f} on day {as_is.min_day}.",
             "critical"))
@@ -379,7 +379,7 @@ def smallest_changes_needed(case: Case, pay_day: int, stress_delay: int,
         out.append("Renegotiate the term that breaks a hard constraint: "
                    + " ".join(as_is.violations))
     if not out:
-        out.append("No single change within the supplied options makes the order work.")
+        out.append("No single change within the supplied options makes the order work." if not case.is_buyer else "No single change within the supplied options makes the offer work.")
     return out
 
 
@@ -724,6 +724,20 @@ def draft_message(winner: SimulationResult, case: Case, pay_day: int,
                   min_advance) -> str:
     """Counterparty message built only from engine-verified numbers."""
     p, ref, cur = winner.plan, case.order_ref, case.currency
+    if case.is_buyer and not p.supplier_extension and p.financing is None:
+        costs = sorted(case.order_costs, key=lambda m: m.day)
+        total = sum((-m.amount for m in costs), ZERO) + case.costs_already_paid
+        if p.id == "decline":
+            return (f"Subject: {ref} -- not able to proceed on current terms\n\n"
+                    f"Thank you for your offer {ref}. After reviewing our dated cash position we "
+                    f"cannot accept it on the current payment schedule without breaching our "
+                    f"minimum cash reserve. We would be glad to proceed if the payments can be "
+                    f"spread later.")
+        return (f"Subject: {ref} -- acceptance\n\n"
+                f"We accept your offer {ref} ({cur} {total:,.0f}) and will pay as per your "
+                f"schedule: " + "; ".join(f"{cur} {-m.amount:,.0f} {m.label.lower()} on day {m.day}"
+                                          for m in costs)
+                + f". Please confirm delivery by day {case.delivery_day}.")
     if p.id == "decline":
         return (f"Subject: {ref} -- unable to accept on current terms\n\n"
                 "Thank you for the purchase order. After a full review of our dated cash "
@@ -753,7 +767,8 @@ def draft_message(winner: SimulationResult, case: Case, pay_day: int,
                 "We accept your quotation and ask to restructure the payment schedule: "
                 + "; ".join(f"the {cur} {-m.amount:,.0f} {m.label.lower()} to fall due on day "
                             f"{m.deferrable_to}" for m in moved)
-                + " (after our customer's receivables clear)."
+                + (" (after the goods arrive)." if case.is_buyer
+                   else " (after our customer's receivables clear).")
                 + ("".join(f" The {cur} {-m.amount:,.0f} {m.label.lower()} remains on day "
                            f"{m.day}." for m in kept)))
     f = p.financing
@@ -773,6 +788,15 @@ WALK_GROUPS = {
 }
 
 
+BUYER_GROUPS = {"order_cost": "Payments to the supplier", "order_revenue": "Income from the goods"}
+
+
+def walk_group(case: Case, kind: str) -> str:
+    if case.is_buyer and kind in BUYER_GROUPS:
+        return BUYER_GROUPS[kind]
+    return WALK_GROUPS.get(kind, kind)
+
+
 def cash_walk(case: Case, plan: engine.Plan, pay_day: int) -> dict:
     """Explain one plan's cash path in owner terms, using only engine numbers.
 
@@ -788,7 +812,7 @@ def cash_walk(case: Case, plan: engine.Plan, pay_day: int) -> dict:
     low_i, low = -1, case.opening_cash
     for i, m in enumerate(movs):
         running += m.amount
-        rows.append({"day": m.day, "label": m.label, "group": WALK_GROUPS.get(m.kind, m.kind),
+        rows.append({"day": m.day, "label": m.label, "group": walk_group(case, m.kind),
                      "kind": m.kind, "counterparty": m.counterparty, "amount": m.amount, "balance": running,
                      "below_reserve": running < case.reserve})
         if running < low:
@@ -836,6 +860,10 @@ def plan_breakdown(run: "AgentRun", result: SimulationResult, pay_day: int) -> d
     case, p, r = run.case, result.plan, result
     cur = case.currency
     m = lambda x: amount_text(x, cur)  # noqa: E731
+    deal = "offer" if case.is_buyer else "order"
+    # who the late-payment test is about: the customer, or (buyer) the income from the goods
+    payer, pays = ((f"the income from the goods", "arrives") if case.is_buyer
+                   else (case.customer, "pays"))
     walk = cash_walk(case, p, pay_day)
     money_in: dict[str, Decimal] = {}
     money_out: dict[str, Decimal] = {}
@@ -847,11 +875,12 @@ def plan_breakdown(run: "AgentRun", result: SimulationResult, pay_day: int) -> d
     for_, against = [], []
     tol = r.tolerance
     if p.id == "decline":
-        for_.append(f"Your cash is untouched by this order: lowest {m(r.min_balance)} on day "
+        for_.append(f"Your cash is untouched by this {deal}: lowest {m(r.min_balance)} on day "
                     f"{r.min_day}, from your existing bills and payroll only.")
-        against.append(f"You give up the order's {m(case.gross_margin)} profit.")
+        if case.gross_margin > 0:
+            against.append(f"You give up the {deal}'s {m(case.gross_margin)} profit.")
         if any(x.feasible and x.plan.id != "decline" for x in run.results.values()):
-            against.append("At least one way of accepting the order keeps your reserve, so declining "
+            against.append(f"At least one way of accepting the {deal} keeps your reserve, so declining "
                            "is not necessary.")
     else:
         if r.reserve_ok:
@@ -864,21 +893,28 @@ def plan_breakdown(run: "AgentRun", result: SimulationResult, pay_day: int) -> d
                            f"{m(case.reserve - r.min_balance)} below your {m(case.reserve)} reserve. "
                            f"It is below the reserve from day {gap.from_day} for {gap.days} day(s).")
         against += r.violations
-        if r.net_margin > 0:
+        costs = case.order_value - case.gross_margin
+        if case.is_buyer and case.order_value == 0:
+            against.append(f"You pay {m(costs)} to {case.supplier or 'the supplier'}"
+                           + (f" plus {m(r.financing_cost)} loan cost" if r.financing_cost else "")
+                           + " and expect no income from these goods within the plan.")
+        elif r.net_margin > 0:
+            src = "the goods" if case.is_buyer else case.customer
+            what = "paid to the supplier" if case.is_buyer else "of order costs"
             for_.append(f"You make {m(r.net_margin)} profit: {m(case.order_value)} in from "
-                        f"{case.customer} minus {m(case.order_value - case.gross_margin)} of order costs"
+                        f"{src} minus {m(costs)} {what}"
                         + (f" minus {m(r.financing_cost)} loan cost." if r.financing_cost else "."))
         else:
-            against.append(f"You lose {m(-r.net_margin)} on this order after all costs.")
+            against.append(f"You lose {m(-r.net_margin)} on this {deal} after all costs.")
         if tol is not None and r.feasible:
-            if tol.kind == "never_pays_safe":
-                for_.append(f"Safe even if {case.customer} never pays the balance.")
+            if tol.kind == "never_pays_safe" and case.order_value > 0:
+                for_.append(f"Safe even if {payer} never {pays}.")
             elif tol.kind == "days" and tol.days == 0:
-                against.append(f"No room for delay: if {case.customer} pays even one day after day "
+                against.append(f"No room for delay: if {payer} {pays} even one day after day "
                                f"{tol.last_safe_pay_day}, cash falls below the reserve.")
             elif tol.kind == "days":
                 (for_ if tol.days >= run.stress_delay else against).append(
-                    f"Still safe if {case.customer} pays up to {tol.days} day(s) late "
+                    f"Still safe if {payer} {pays} up to {tol.days} day(s) late "
                     f"(by day {tol.last_safe_pay_day}); later than that, cash falls below the reserve.")
         if p.financing is None:
             for_.append("No loan, so no interest or fees.")

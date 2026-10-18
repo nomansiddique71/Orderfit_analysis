@@ -23,16 +23,19 @@ def test_owner_can_approve_a_non_recommended_safe_plan_and_its_message_is_sent()
     other = next(p for p in a["plans"] if p["feasible"] and p["financing"] and not p["recommended"]
                  and p["advance_pct"] == 0 and not p["supplier_extension"])
     d = client.post("/api/draft", json={"session_id": sid, "plan_id": other["id"]}).json()["messages"]
-    assert len(d) == 1 and "Financing acceptance" in d[0]["body"] and d[0]["to"].endswith(".example")
+    # the customer always hears that the order is accepted; the lender gets the loan acceptance
+    assert [m["party"] for m in d] == ["customer", "lender"]
+    assert d[0]["to"] == "ap@meridianretail.example"  # the address from the purchase order
+    assert "Financing acceptance" in d[1]["body"] and d[1]["to"].endswith(".example")
     appr = _approve(sid, other["id"])
-    msg = appr["messages"][0]
-    assert msg["sent"] and msg["body"] == d[0]["body"] and msg["to"] == d[0]["to"]
+    msg = appr["messages"][1]
+    assert msg["sent"] and msg["body"] == d[1]["body"] and msg["to"] == d[1]["to"]
     log = client.get(f"/api/log?session_id={sid}").json()["entries"]
     assert any(e["tool"] == "outbox.send" and e["approval_id"] == appr["id"] for e in log)
     ex = client.post("/api/execute", json={"session_id": sid}).json()
     assert ex["ok"] and "already sent" in ex["steps"][0]
     assert sum(e["tool"] == "outbox.send" for e in
-               client.get(f"/api/log?session_id={sid}").json()["entries"]) == 1  # not sent twice
+               client.get(f"/api/log?session_id={sid}").json()["entries"]) == 2  # not sent twice
 
 
 def test_recommended_plan_message_goes_to_the_customer():

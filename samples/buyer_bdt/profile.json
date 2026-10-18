@@ -1,0 +1,65 @@
+{
+  "name": "Padma Garments Ltd",
+  "currency": "BDT",
+  "opening_cash": "1000000",
+  "reserve": "300000",
+  "max_financing_cost": "40000",
+  "obligations": [
+    {
+      "day": 10,
+      "amount": "-100000",
+      "label": "Factory rent",
+      "kind": "obligation",
+      "counterparty": "Landlord"
+    },
+    {
+      "day": 15,
+      "amount": "-350000",
+      "label": "Payroll",
+      "kind": "payroll",
+      "counterparty": "Staff"
+    },
+    {
+      "day": 28,
+      "amount": "250000",
+      "label": "Receivable (invoice 0981)",
+      "kind": "receivable",
+      "counterparty": "Aarong Retail",
+      "due_day": -2
+    },
+    {
+      "day": 40,
+      "amount": "-100000",
+      "label": "Factory rent",
+      "kind": "obligation",
+      "counterparty": "Landlord"
+    },
+    {
+      "day": 45,
+      "amount": "-350000",
+      "label": "Payroll",
+      "kind": "payroll",
+      "counterparty": "Staff"
+    }
+  ],
+  "offers": [
+    {
+      "id": "JCB-1",
+      "lender": "Jamuna Commerce Bank",
+      "principal": "500000",
+      "fee_pct": "0",
+      "origination": "5000",
+      "draw_day": 0,
+      "repay_day": 90,
+      "expires_day": 10,
+      "monthly_rate_pct": "1.25",
+      "conditions": "Working-capital line 2,00,000-10,00,000; 1.25% per month + 5,000 fee.",
+      "min_principal": "200000",
+      "max_principal": "1000000"
+    }
+  ],
+  "deal": {
+    "expected_income": "1200000",
+    "income_days": "30"
+  }
+}
