@@ -129,7 +129,7 @@ def test_buyer_messages_go_to_the_supplier():
         msgs = client.post("/api/draft", json={"session_id": sid, "plan_id": pid}).json()["messages"]
         assert [m["to_name"] for m in msgs] == ["Meghna Fabrics Ltd"]
     asis = client.post("/api/draft", json={"session_id": sid, "plan_id": "accept-as-is"}).json()
-    assert "We accept your offer Q-77 (BDT 750,000)" in asis["messages"][0]["body"]
+    assert "We accept your offer Q-77 (BDT 7,50,000)" in asis["messages"][0]["body"]
 
 
 def test_documents_in_another_currency_are_flagged_not_converted():

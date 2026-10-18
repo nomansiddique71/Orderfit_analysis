@@ -233,8 +233,10 @@ class AuthStore:
         u.company_email, u.role, u.currency = company_email, role, currency
         return u
 
-    def add_approved(self, token: str, record: dict) -> None:
-        u = self.user_for(token)
+    def add_approved(self, email: str, record: dict) -> None:
+        u = self.users.get(email)
+        if u is None:
+            return
         with self._lock:
             u.approved_plans.insert(0, record)
             del u.approved_plans[MAX_APPROVED:]

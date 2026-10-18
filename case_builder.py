@@ -201,7 +201,8 @@ def build_case(facts: Facts, profile: BusinessProfile, edits: dict | None = None
                 else (val("customer_name") or "Customer").strip())
     ref = (val("order_ref") or ("the offer" if buyer else "the order")).strip()
     case = Case(
-        name=f"{profile.name} -- {ref} ({customer})",
+        name=(f"{profile.name} -- {ref} (offer from {supplier})" if buyer
+              else f"{profile.name} -- {ref} ({customer})"),
         opening_cash=profile.opening_cash, reserve=profile.reserve,
         order_value=order_value.value, delivery_day=delivery, required_delivery_day=delivery,
         base_movements=tuple(profile.obligations), order_costs=tuple(costs),

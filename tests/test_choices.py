@@ -1,5 +1,6 @@
 """The owner chooses: any safe plan (not only the recommended one), what to do
-about each fraud/integrity check, and approval sends that plan's message."""
+about each fraud/integrity check; after approval, Notify sends that plan's
+messages and books it in the sandbox."""
 
 import sys
 from pathlib import Path
@@ -16,6 +17,12 @@ def _approve(sid, plan_id, **kw):
     return r.json()["approval"]
 
 
+def _notify(sid, **kw):
+    r = client.post("/api/notify", json={"session_id": sid, **kw})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_owner_can_approve_a_non_recommended_safe_plan_and_its_message_is_sent():
     sid = _session()
     _sample(sid, "clean")
@@ -28,12 +35,15 @@ def test_owner_can_approve_a_non_recommended_safe_plan_and_its_message_is_sent()
     assert d[0]["to"] == "ap@meridianretail.example"  # the address from the purchase order
     assert "Financing acceptance" in d[1]["body"] and d[1]["to"].endswith(".example")
     appr = _approve(sid, other["id"])
-    msg = appr["messages"][1]
+    assert appr["messages"] == [] and not appr["notified"]  # approving sends nothing yet
+    n = _notify(sid)
+    msg = n["approval"]["messages"][1]
     assert msg["sent"] and msg["body"] == d[1]["body"] and msg["to"] == d[1]["to"]
     log = client.get(f"/api/log?session_id={sid}").json()["entries"]
     assert any(e["tool"] == "outbox.send" and e["approval_id"] == appr["id"] for e in log)
-    ex = client.post("/api/execute", json={"session_id": sid}).json()
+    ex = n["executed"]  # Notify also booked the plan in the sandbox
     assert ex["ok"] and "already sent" in ex["steps"][0]
+    assert client.post("/api/notify", json={"session_id": sid}).status_code == 409
     assert sum(e["tool"] == "outbox.send" for e in
                client.get(f"/api/log?session_id={sid}").json()["entries"]) == 2  # not sent twice
 
@@ -42,7 +52,8 @@ def test_recommended_plan_message_goes_to_the_customer():
     sid = _session()
     _sample(sid, "clean")
     a = _analyze(sid)
-    msgs = _approve(sid, a["verdict"]["winner"])["messages"]
+    _approve(sid, a["verdict"]["winner"])
+    msgs = _notify(sid)["approval"]["messages"]
     assert [m["to_name"] for m in msgs] == ["Meridian Retail Group"] and "advance" in msgs[0]["body"]
 
 
@@ -52,7 +63,8 @@ def test_combined_plan_messages_every_party():
     a = _analyze(sid)
     combo = next(p for p in a["plans"] if p["feasible"] and p["advance_pct"] > 0
                  and p["supplier_extension"] and p["financing"])
-    msgs = _approve(sid, combo["id"])["messages"]
+    _approve(sid, combo["id"])
+    msgs = _notify(sid)["approval"]["messages"]
     assert [m["to_name"] for m in msgs] == ["Meridian Retail Group", "Brightwave Supplies",
                                             combo["financing"]["lender"]]
     assert all(m["sent"] for m in msgs)
@@ -99,7 +111,7 @@ def test_log_says_where_each_step_ran_and_sandbox_shows_what_it_did():
     _sample(sid, "clean")
     a = _analyze(sid)
     appr = _approve(sid, a["verdict"]["winner"])
-    assert client.post("/api/execute", json={"session_id": sid}).json()["ok"]
+    assert _notify(sid)["executed"]["ok"]
     client.post("/api/t3", json={"session_id": sid, "action": "live_transfer"})
     entries = client.get(f"/api/log?session_id={sid}").json()["entries"]
     where = {e["tool"]: e["where"] for e in entries}
@@ -108,7 +120,7 @@ def test_log_says_where_each_step_ran_and_sandbox_shows_what_it_did():
     assert where["bank.live_transfer"] == "blocked"
     assert all(e["what"] for e in entries)
     sb = client.get(f"/api/sandbox?session_id={sid}").json()
-    assert sb["outbox"][0]["approval_id"] == appr["id"] and sb["outbox"][0]["to"].endswith(".example")
+    assert sb["outbox"][0]["approval_id"] == appr["id"] and sb["outbox"][0]["to"] == "ap@meridianretail.example"
     assert sb["bank"]["approval_id"] == appr["id"] and sb["bank"]["rows"]
     winner = next(p for p in a["plans"] if p["id"] == a["verdict"]["winner"])
     assert min(r["balance"] for r in sb["bank"]["rows"]) == winner["min_balance"]

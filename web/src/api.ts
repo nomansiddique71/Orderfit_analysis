@@ -91,8 +91,15 @@ export interface Breakdown {
   profit: { income: number; costs: number; financing: number; net: number };
   rows: { day: number; label: string; group: string; kind: string; counterparty: string; amount: number; balance: number; below_reserve: boolean }[];
 }
-export interface SentMessage { to: string; to_name: string; subject: string; body: string; source: string; status: string; sent: boolean }
-export interface Approval { id: string; plan_id: string; label: string; override: boolean; reason: string; version: string; messages: SentMessage[] }
+export interface SentMessage { party?: string; to: string; to_name: string; subject: string; body: string; source: string; status: string; sent: boolean }
+export interface Approval { id: string; plan_id: string; label: string; override: boolean; reason: string; version: string; messages: SentMessage[]; notified: boolean }
+export interface ApprovedRecord {
+  id: string; time: string; case: string; business: string; role: Role; counterparty: string; party: string;
+  plan_id: string; plan: string; override: boolean; reason: string; currency: string; order_ref: string;
+  numbers: { low: number; low_day: number; reserve: number; net_profit: number; financing_cost: number; opening: number };
+  summary: string; reasons_for: string[]; reasons_against: string[]; mails: SentMessage[];
+  sandbox: { ok: boolean; consistency: string | null; steps: string[] };
+}
 export interface Execution {
   ok: boolean; steps: string[]; consistency: string | null; override: boolean;
   ledger: { day: number; amount: string; label: string }[]; outbox: { to: string; subject: string; body: string; status: string }[];
@@ -259,6 +266,12 @@ export async function authPost<T>(path: string, body: Record<string, unknown> = 
     method: "POST", headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
     body: JSON.stringify(body),
   }).then((r) => handle<T>(r)));
+}
+
+/** Approved plans of the logged-in owner (or of this session when nobody is logged in). */
+export async function approvedPlans(): Promise<ApprovedRecord[]> {
+  const r = await tracked(fetch(`/api/approved?session_id=${encodeURIComponent(sessionId ?? "")}`, { headers: authHeader() }).then((x) => handle<{ plans: ApprovedRecord[] }>(x)));
+  return r.plans;
 }
 
 export async function me(): Promise<User | null> {

@@ -227,7 +227,7 @@ def execute_plan(run, result: SimulationResult, draft: str, approval: Approval,
 
     # 1. draft message -> mock outbox (T2, gated), unless it went out on approval
     if message_already_sent:
-        steps.append("Message already sent to the mock outbox when you approved.")
+        steps.append("Emails already sent to the demo outbox when you pressed Notify.")
     else:
         ok, reason = gate.check_t2("outbox.send", {"subject": "draft", "override": ovr},
                                    aid, approvals, pv)

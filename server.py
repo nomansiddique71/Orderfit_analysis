@@ -93,6 +93,7 @@ class Session:
     last: dict = field(default_factory=dict)  # run, case, pay_day, versions
     ai_cache: dict = field(default_factory=dict)
     account: str = ""  # email of the logged-in owner who loaded the case ("" = anonymous API use)
+    approved: list = field(default_factory=list)  # approved-plan records when nobody is logged in
     role: str = "seller"  # the owner's side in THIS deal (seller | buyer)
     role_source: str = "default"  # profile | documents | owner | sample | default
     role_guess: roles.RoleGuess = field(default_factory=lambda: roles.RoleGuess(None, ""))
@@ -875,7 +876,8 @@ def _approval_json(s: Session) -> dict | None:
         return None
     return {"id": a.approval_id, "plan_id": a.plan_id, "label": a.display_label,
             "override": a.override, "reason": a.reason, "version": a.plan_version,
-            "messages": s.messages.get(a.approval_id, [])}
+            "messages": s.messages.get(a.approval_id, []),
+            "notified": bool(s.messages.get(a.approval_id))}
 
 
 def _last(s: Session) -> dict:
@@ -1039,26 +1041,96 @@ def approve(req: ApproveReq):
     s.log.append("request_approval", "T1", {"plan_version": pv, "plan": r.plan.id,
                                             "override": req.override, "reason": req.reason},
                  aid, f"approved by owner: {label}")
-    # The approval authorises this plan's messages: they go to the mock outbox now.
+    # The approval authorises this plan's messages; they go out when the owner
+    # presses Notify (see notify), which also books the plan in the sandbox.
+    s.messages[aid] = []
+    return {"approval": _approval_json(s)}
+
+
+class NotifyReq(BaseModel):
+    session_id: str
+    polished: bool = False  # send Gemini's verified rewording instead of the engine draft
+
+
+@app.post("/api/notify")
+def notify(req: NotifyReq, authorization: str | None = Header(default=None)):
+    """After approval: email the deal's counterparty (and any other party the plan
+    needs) through the mock outbox, book the plan in the sandbox bank, and file the
+    approved plan with its emails under the owner's Approved plans."""
+    s = _session(req.session_id)
+    last = _last(s)
+    run, a = last["run"], s.approvals.get(s.active_approval or "")
+    if a is None:
+        raise HTTPException(409, "Approve a plan first.")
+    if s.messages.get(a.approval_id):
+        raise HTTPException(409, "Already notified for this approval.")
+    r = run.results[a.plan_id]
     sent_all = []
     for i, m in enumerate(_messages_for(s, r.plan.id)):
         body, source = m["body"], "engine"
         if req.polished:
-            cached = s.ai_cache.get(("polish", s.last["sig"], run.winner.plan.id, f"{r.plan.id}#{i}"))
+            cached = s.ai_cache.get(("polish", last["sig"], run.winner.plan.id, f"{r.plan.id}#{i}"))
             if cached and cached[1] == "gemini":
                 body, source = cached[0], "gemini"
-        sent, why = send_on_approval(s.approvals[aid], s.approvals, s.gate, s.log, s.outbox,
+        sent, why = send_on_approval(a, s.approvals, s.gate, s.log, s.outbox,
                                      m["to"], m["subject"], body)
         sent_all.append({**m, "body": body, "source": source, "sent": sent,
-                         "status": "sent to the mock outbox (nothing delivered)" if sent
+                         "status": "sent to the demo outbox (nothing really delivered)" if sent
                          else f"not sent: {why}"})
-    s.messages[aid] = sent_all
-    return {"approval": _approval_json(s)}
+    s.messages[a.approval_id] = sent_all
+    executed = _execute(s)
+    record = _approved_record(s, a, r, sent_all, executed)
+    u = _owner(authorization) or _account(s)
+    if u is not None:
+        AUTH.add_approved(u.email, record)
+    else:
+        s.approved.insert(0, record)
+    return {"approval": _approval_json(s), "executed": executed, "record": record}
+
+
+def _approved_record(s: Session, a, r, mails: list[dict], executed: dict) -> dict:
+    """What the Approved plans section keeps: the plan, its key numbers, the reasons,
+    the emails sent and the sandbox result."""
+    last = s.last
+    case = last["case"]
+    b = agent.plan_breakdown(last["run"], r, last["pay_day"])
+    primary = mails[0] if mails else {}
+    return {
+        "id": a.approval_id, "time": time.strftime("%d %b %Y, %H:%M"), "case": case.name,
+        "business": s.profile.name if s.profile else "", "role": case.role,
+        "counterparty": primary.get("to_name", ""), "party": primary.get("party", ""),
+        "plan_id": r.plan.id, "plan": r.plan.label, "override": a.override, "reason": a.reason,
+        "currency": case.currency, "order_ref": case.order_ref,
+        "numbers": {"low": num(r.min_balance), "low_day": r.min_day, "reserve": num(case.reserve),
+                    "net_profit": num(r.net_margin), "financing_cost": num(r.financing_cost),
+                    "opening": num(case.opening_cash)},
+        "summary": b["summary"], "reasons_for": b["reasons_for"],
+        "reasons_against": b["reasons_against"],
+        "mails": [{k: m[k] for k in ("party", "to_name", "to", "subject", "body", "status", "sent", "source")}
+                  for m in mails],
+        "sandbox": {"ok": executed["ok"], "consistency": executed["consistency"],
+                    "steps": executed["steps"]},
+    }
+
+
+@app.get("/api/approved")
+def approved(session_id: str = "", authorization: str | None = Header(default=None)):
+    """The owner's approved plans with the emails sent (newest first). In server
+    memory only, like the demo accounts."""
+    u = _owner(authorization)
+    if u is not None:
+        return {"plans": u.approved_plans}
+    s = _SESSIONS.get(session_id)
+    return {"plans": s.approved if s else []}
 
 
 @app.post("/api/execute")
 def execute(req: SessionReq):
-    s = _session(req.session_id)
+    """Kept for the API and tests; the UI books the plan as part of Notify."""
+    return _execute(_session(req.session_id))
+
+
+def _execute(s: Session) -> dict:
     last = _last(s)
     run, a = last["run"], s.approvals.get(s.active_approval or "")
     if a is None:
@@ -1156,7 +1228,8 @@ TOOL_TEXT = {
     "extract_fields": "Documents read", "manual_entry": "Order typed in by you",
     "set_profile": "Business details saved", "resolve_flag": "Your decision on a check",
     "simulate+rank_plans": "Cash simulated day by day and plans ranked",
-    "request_approval": "You approved a plan", "outbox.send": "Message posted to the mock outbox",
+    "request_approval": "You approved a plan", "outbox.send": "Email posted to the demo outbox",
+    "set_role": "You set your side of the deal",
     "lender.accept": "Loan accepted in the mock lender portal",
     "bank.post": "Payments booked in the simulated bank", "consistency_check":
     "Simulated bank compared with the engine's prediction", "execute_plan": "Execution attempt",

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import {
-  BookOpen, BrainCircuit, CheckCircle2, ChevronDown, CircleDot, FileSearch, Gauge, GitCompare,
+  BookOpen, BrainCircuit, CheckCircle2, ChevronDown, CircleDot, FileSearch, FolderCheck, Gauge, GitCompare,
   HelpCircle, Lock, ShieldCheck, Sparkles, Stamp, UserRound,
 } from "lucide-react";
 import type { User } from "../api";
@@ -10,7 +10,7 @@ export const STEPS = [
   { key: "facts", title: "Check the facts", sub: "Verify what AI read", icon: ShieldCheck },
   { key: "risk", title: "See the cash risk", sub: "Day-by-day balance", icon: Gauge },
   { key: "options", title: "Compare options", sub: "Find the safest way", icon: GitCompare },
-  { key: "act", title: "Approve & act", sub: "Sandbox, fully logged", icon: Stamp },
+  { key: "act", title: "Approve & notify", sub: "Email the other side", icon: Stamp },
 ] as const;
 
 function Section({ title, icon, children, open: initial = false }: { title: string; icon: ReactNode; children: ReactNode; open?: boolean }) {
@@ -30,10 +30,10 @@ function Term({ t, children }: { t: string; children: ReactNode }) {
   return <p className="mb-2"><span className="font-semibold text-white">{t}: </span>{children}</p>;
 }
 
-export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfile }: {
+export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfile, approvedActive, onApproved }: {
   step: number; maxStep: number; onStep: (i: number) => void;
   ai: { label: string; gemini: boolean } | null; onHowItWorks: () => void;
-  user: User; onProfile: () => void;
+  user: User; onProfile: () => void; approvedActive: boolean; onApproved: () => void;
 }) {
   return (
     <aside className="flex h-full w-[300px] shrink-0 flex-col bg-gradient-to-b from-ink-950 via-ink-900 to-ink-800 text-slate-200">
@@ -52,7 +52,7 @@ export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfi
       <nav className="px-3">
         {STEPS.map((s, i) => {
           const Icon = s.icon;
-          const active = i === step, done = i < step, locked = i > maxStep;
+          const active = i === step && !approvedActive, done = i < step, locked = i > maxStep;
           return (
             <button key={s.key} disabled={locked} onClick={() => onStep(i)}
               className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${active ? "bg-white/10 text-white" : locked ? "cursor-not-allowed text-slate-500" : "text-slate-300 hover:bg-white/5"}`}>
@@ -67,6 +67,14 @@ export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfi
             </button>
           );
         })}
+        <button onClick={onApproved}
+          className={`mt-2 flex w-full items-center gap-3 rounded-xl border border-white/10 px-3 py-2.5 text-left transition ${approvedActive ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5"}`}>
+          <span className={`grid h-7 w-7 place-items-center rounded-lg ${approvedActive ? "bg-brand-600 text-white" : "bg-white/5"}`}><FolderCheck className="h-4 w-4" /></span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">Approved plans</span>
+            <span className="block text-[11px] text-slate-400">Plans and the emails sent</span>
+          </span>
+        </button>
       </nav>
 
       <div className="mx-6 mt-4 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -83,7 +91,7 @@ export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfi
             <li><b>Check the facts.</b> Gemini reads the documents; every value shows the exact quote it came from. Fix or confirm anything marked <i>Needs your check</i>, and deal with any red fraud alert.</li>
             <li><b>See the cash risk.</b> The chart shows your balance every day if you accept as-is. Red = below your reserve.</li>
             <li><b>Compare options.</b> Customer advance, later supplier payment, a loan, or decline. Tell SolvOrder what matters most and how late the customer might pay.</li>
-            <li><b>Approve & act.</b> Approve one plan. SolvOrder drafts the email, books the payments in a simulated bank and logs every step. Nothing real is sent.</li>
+            <li><b>Approve & notify.</b> Approve one plan, then press <b>Notify my customer</b> (or supplier, when you are the buyer). The email goes to the demo outbox, the payments are booked in a simulated bank, and the plan is filed under <b>Approved plans</b>. Nothing real is sent.</li>
           </ol>
         </Section>
         <Section title="Reading the results" icon={<Gauge className="h-4 w-4 text-brand-500" />}>

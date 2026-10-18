@@ -50,7 +50,7 @@ export function SandboxPanel({ version, tab, setTab, cur }: { version: number; t
               <pre className="whitespace-pre-wrap p-3 pt-1 font-sans text-sm text-slate-700">{m.body.split("\n").slice(2).join("\n") || m.body}</pre>
             </div>))}</div>)}
         {v && tab === "bank" && (v.bank.rows.length === 0
-          ? <Empty icon={<Landmark className="h-5 w-5" />} text="Nothing booked yet. 'Execute the payments' books the approved plan here." />
+          ? <Empty icon={<Landmark className="h-5 w-5" />} text="Nothing booked yet. Pressing Notify after approval books the approved plan here." />
           : <>
             <div className="mb-2 text-xs text-slate-500">Ledger for approval <b>{v.bank.approval_id}</b>, starting from {money(v.bank.opening ?? 0, cur)} today.</div>
             <table className="w-full text-sm">

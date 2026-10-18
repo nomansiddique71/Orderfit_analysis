@@ -5,7 +5,7 @@ import { BusyOverlay, Callout, Card, LoadingButton, SectionTitle } from "./ui";
 
 const BADGE: Record<string, string> = {
   Risk: "bg-sky-100 text-sky-800", Fraud: "bg-rose-100 text-rose-800",
-  Security: "bg-violet-100 text-violet-800", Integrity: "bg-amber-100 text-amber-800",
+  Security: "bg-violet-100 text-violet-800", Integrity: "bg-amber-100 text-amber-800", Role: "bg-emerald-100 text-emerald-800",
 };
 
 export function StartStep({ onLoaded, onHowItWorks, aiOn, role, company }: {

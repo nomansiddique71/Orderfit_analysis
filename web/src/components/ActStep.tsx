@@ -1,18 +1,70 @@
 import { useEffect, useState } from "react";
-import { Ban, CheckCircle2, FileSignature, Landmark, Mail, Play, Send, ShieldCheck, Sparkles, XCircle } from "lucide-react";
-import { get, post, type Analysis, type Approval, type Execution, type LogEntry } from "../api";
+import { Ban, BellRing, CheckCircle2, FileSignature, Landmark, ListTree, Mail, Send, ShieldCheck, Sparkles, X, XCircle } from "lucide-react";
+import { get, post, type Analysis, type Approval, type ApprovedRecord, type Execution, type LogEntry } from "../api";
+import { BreakdownModal } from "./Breakdown";
 import type { Choice } from "./OptionsStep";
 import { OperationLog, SandboxPanel, type SandboxTab } from "./Sandbox";
 import { money, planTitle } from "../format";
 import { BusyOverlay, Callout, Card, LoadingButton, Pill, SectionTitle, Updating } from "./ui";
 
 
-export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Promise<void>; choice: Choice }) {
+/** "Notify my customer" (seller) / "Notify my supplier" (buyer): the deal's counterparty. */
+function notifyLabel(a: Analysis, drafts: { party?: string; to_name: string }[] | null) {
+  const first = drafts?.[0];
+  const who = a.case.role === "buyer" ? "supplier" : "customer";
+  const others = (drafts ?? []).slice(1).map((d) => d.party === "lender" ? "lender" : d.party ?? "").filter(Boolean);
+  return `Notify my ${who}${first ? ` (${first.to_name})` : ""}${others.length ? ` + ${others.join(" + ")}` : ""}`;
+}
+
+function NotifyModal({ a, drafts, busy, onSend, onClose }: {
+  a: Analysis; drafts: { to: string; to_name: string; subject: string; body: string; source: string }[];
+  busy: boolean; onSend: () => void; onClose: () => void;
+}) {
+  const who = a.case.role === "buyer" ? "supplier" : "customer";
+  return (
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 grid place-items-center bg-ink-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-6">
+          <div className="flex gap-3">
+            <div className="rounded-xl bg-brand-50 p-2 text-brand-700"><BellRing className="h-5 w-5" /></div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Notify your {who} by mail?</h3>
+              <p className="text-sm text-slate-500">SolvOrder wrote {drafts.length === 1 ? "this email" : `these ${drafts.length} emails`} from the plan you approved. Sending also books the plan in the sandbox bank and files it under Approved plans.</p>
+            </div>
+          </div>
+          <button className="text-slate-400 hover:text-slate-700" aria-label="Close" onClick={onClose}><X className="h-5 w-5" /></button>
+        </div>
+        <div className="flex-1 space-y-3 overflow-y-auto p-6">
+          {drafts.map((d, i) => (
+            <div key={i} className="rounded-xl border border-slate-200">
+              <div className="border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">To: <b className="text-slate-700">{d.to_name}</b> &lt;{d.to}&gt;{d.source === "gemini" && " · Gemini-polished, numbers verified"}</div>
+              <div className="px-3 pt-2 text-sm font-semibold text-slate-800">{d.subject}</div>
+              <pre className="whitespace-pre-wrap p-3 font-sans text-sm text-slate-700">{d.body.split("\n").slice(2).join("\n")}</pre>
+            </div>
+          ))}
+          <Callout tone="info">Demo: the email goes to SolvOrder's outbox and is not really delivered. No real email or payment leaves SolvOrder.</Callout>
+        </div>
+        <div className="flex justify-end gap-3 border-t border-slate-100 p-4">
+          <button className="btn-secondary" disabled={busy} onClick={onClose}>Not now</button>
+          <LoadingButton className="btn-primary" loading={busy} loadingText="Sending…" onClick={onSend}><Send className="h-4 w-4" /> Send {drafts.length === 1 ? "the email" : `${drafts.length} emails`}</LoadingButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ActStep({ a, refresh, choice, onSent, onOpenApproved }: {
+  a: Analysis; refresh: () => Promise<void>; choice: Choice;
+  onSent: (text: string) => void; onOpenApproved: () => void;
+}) {
   const cur = a.case.currency;
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [record, setRecord] = useState<ApprovedRecord | null>(null);
+  const [bd, setBd] = useState(false);
   const [approval, setApproval] = useState<Approval | null>(a.approval);
   const [exec, setExec] = useState<Execution | null>(a.executed);
   const [err, setErr] = useState<string | null>(null);
-  type Draft = { body: string; to: string; to_name: string; subject: string; source: string; note?: string };
+  type Draft = { body: string; to: string; to_name: string; subject: string; source: string; note?: string; party?: string };
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -57,14 +109,23 @@ export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Pr
 
   return (
     <div className="space-y-6">
-      <BusyOverlay show={busy === "execute"} title="Executing the approved plan"
-        steps={["Checking your approval and the fraud gate", "Accepting loan terms in the mock lender portal", "Booking payments in the simulated bank", "Comparing the ledger with the engine"]} />
+      <BusyOverlay show={busy === "notify"} title="Notifying and booking the approved plan"
+        steps={["Sending the emails to the demo outbox", "Checking your approval and the fraud gate", "Booking payments in the simulated bank", "Filing the plan under Approved plans"]} />
+      {notifyOpen && drafts && <NotifyModal a={a} drafts={drafts} busy={busy === "notify"} onClose={() => setNotifyOpen(false)}
+        onSend={() => act("notify", () => post<{ approval: Approval; executed: Execution; record: ApprovedRecord }>("/api/notify", { polished: !!drafts?.some((d) => d.source === "gemini") }),
+          async (r) => {
+            setApproval(r.approval); setExec(r.executed); setRecord(r.record); setNotifyOpen(false);
+            const sent = r.approval.messages.filter((m) => m.sent).map((m) => m.to_name);
+            onSent(sent.length ? `Email sent to ${sent.join(", ")} (demo outbox). Saved under Approved plans.` : "No email could be sent: see the approval card.");
+            await refresh();
+          })} />}
+      {bd && <BreakdownModal planId={draftPlan} title={planTitle(a.plans.find((p) => p.id === draftPlan)!, cur)} cur={cur} onClose={() => setBd(false)} />}
       {a.verdict.provisional && <Callout tone="warning" title="Confirm the provisional facts first">Approval is locked while a value that changes the result is unconfirmed. Use the Confirm buttons on the risk screen.</Callout>}
       {blocked && <Callout tone="critical" title="A fraud check is still open">{a.verdict.execution_blocks.join("; ")}. You can approve, but every payment step will be refused until you record the check on the facts screen.</Callout>}
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="p-6">
-          <SectionTitle icon={<Mail className="h-5 w-5" />} title="Message for this plan" sub="Drafted from the engine's numbers for the plan you selected. Gemini may reword it, never change a figure. It is sent (to the mock outbox) the moment you approve." />
+          <SectionTitle icon={<Mail className="h-5 w-5" />} title="Message for this plan" sub="Drafted from the engine's numbers for the plan you selected. Gemini may reword it, never change a figure. After you approve, the Notify button sends it." />
           <Updating active={draftLoading}>
             {!drafts && <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Loading the message…</div>}
             <div className="space-y-3">
@@ -92,15 +153,16 @@ export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Pr
         </Card>
 
         <Card className="p-6">
-          <SectionTitle icon={<FileSignature className="h-5 w-5" />} title="Approve a plan" sub="Pick any safe plan: the recommended one is starred, but the choice is yours. Approving sends the message; payments wait for Execute." />
+          <SectionTitle icon={<FileSignature className="h-5 w-5" />} title="Approve a plan" sub="Pick any safe plan: the recommended one is starred, but the choice is yours. After approving, notify the other side by mail." />
           <label className="label">Plan</label>
           <select className="input mt-1" value={planId} onChange={(e) => setPlanId(e.target.value)}>
             {feasible.map((p) => <option key={p.id} value={p.id}>{p.recommended ? "★ " : ""}{planTitle(p, cur)}</option>)}
           </select>
+          <button className="mt-2 flex items-center gap-1 text-sm font-semibold text-brand-700" disabled={!draftPlan} onClick={() => setBd(true)}><ListTree className="h-4 w-4" /> See the money breakdown for this plan</button>
           <LoadingButton className="btn-primary mt-3 w-full" loading={busy === "approve"} loadingText="Recording your approval…"
             disabled={!!busy || a.verdict.provisional || !feasible.length}
             onClick={() => act("approve", () => post<{ approval: Approval }>("/api/approve", { plan_id: planId, polished: !!drafts?.some((d) => d.source === "gemini") }), (r) => { setApproval(r.approval); setExec(null); })}>
-            <CheckCircle2 className="h-4 w-4" /> Approve and send the message
+            <CheckCircle2 className="h-4 w-4" /> Approve this plan
           </LoadingButton>
 
           <div className="mt-4 border-t border-slate-100 pt-4">
@@ -134,16 +196,20 @@ export function ActStep({ a, refresh, choice }: { a: Analysis; refresh: () => Pr
               {approval.messages.map((m, i) => (
                 <div key={i} className={`mt-3 rounded-lg border p-3 text-sm ${m.sent ? "border-emerald-200 bg-white" : "border-rose-200 bg-white"}`}>
                   <div className="flex flex-wrap items-center gap-2 font-semibold"><Send className="h-4 w-4" />
-                    {m.sent ? `Message sent automatically to ${m.to_name}` : `Message to ${m.to_name} not sent`}
-                    <Pill tone="violet">SANDBOX</Pill></div>
+                    {m.sent ? `Email sent to ${m.to_name}` : `Email to ${m.to_name} not sent`}
+                    <Pill tone="violet">DEMO OUTBOX</Pill></div>
                   <div className="text-xs text-slate-500">{m.to} · {m.status}{m.source === "gemini" ? " · Gemini-polished, numbers verified" : ""}</div>
                   <div className="mt-1 text-xs font-medium text-slate-700">{m.subject}</div>
                 </div>
               ))}
-              <LoadingButton className="btn-primary mt-3 w-full" loading={busy === "execute"} loadingText="Executing in the sandbox…" disabled={!!busy}
-                onClick={() => act("execute", () => post<Execution>("/api/execute"), async (r) => { setExec(r); await refresh(); })}>
-                <Play className="h-4 w-4" /> Execute the payments in the sandbox
-              </LoadingButton>
+              {!approval.notified ? (
+                <LoadingButton className="btn-primary mt-3 w-full" loading={busy === "notify"} loadingText="Sending…" disabled={!!busy || !drafts}
+                  onClick={() => setNotifyOpen(true)}>
+                  <BellRing className="h-4 w-4" /> {notifyLabel(a, drafts)}
+                </LoadingButton>
+              ) : (
+                <button className="btn-secondary mt-3 w-full" onClick={onOpenApproved}>Open Approved plans{record ? ` (${record.id})` : ""}</button>
+              )}
             </div>
           )}
           {err && <div className="mt-3"><Callout tone="critical">{err}</Callout></div>}

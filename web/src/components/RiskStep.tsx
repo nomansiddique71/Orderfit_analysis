@@ -67,6 +67,7 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext, updating }
   updating: boolean;
 }) {
   const cur = a.case.currency;
+  const buyer = a.case.role === "buyer";
   const asis = a.plans.find((p) => p.id === "accept-as-is")!;
   const best = a.plans.find((p) => p.id === a.verdict.winner)!;
   const decline = a.plans.find((p) => p.id === "decline")!;
@@ -90,9 +91,9 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext, updating }
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <Stat label="Order value" value={money(a.case.order_value, cur)} sub={`Gross profit ${money(a.case.gross_margin, cur)}`} />
+        <Stat label={buyer ? "Income from the goods" : "Order value"} value={money(a.case.order_value, cur)} sub={`Gross profit ${money(a.case.gross_margin, cur)}`} />
         <Stat label="Cash today" value={money(a.case.opening_cash, cur)} sub={`Reserve ${money(a.case.reserve, cur)}`} />
-        <Stat label="Customer pays" value={`Day ${a.case.pay_day}`} sub={`Delivery day ${a.case.delivery_day}`} />
+        <Stat label={buyer ? "Income arrives" : "Customer pays"} value={`Day ${a.case.pay_day}`} sub={`${buyer ? "Goods arrive" : "Delivery"} day ${a.case.delivery_day}`} />
         <Stat label="If accepted as-is" value={money(asis.min_balance, cur)} tone={asis.reserve_ok ? "good" : "bad"}
           sub={asis.reserve_ok ? "never below the reserve" : `lowest, day ${asis.min_day} · first breach day ${asis.first_breach_day}`} />
         <Stat label="Funding gap" value={a.gap.days ? money(a.gap.amount, cur) : "None"} tone={a.gap.days ? "bad" : "good"}
@@ -131,7 +132,7 @@ export function RiskStep({ a, onConfirm, reading, setReading, onNext, updating }
                     <td className={`text-right font-medium ${m.amount < 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(m.amount, cur, { sign: true })}</td>
                   </tr>
                 ))}
-                <tr className="border-t border-slate-100"><td className="py-1.5 text-slate-500">{a.case.pay_day}</td><td>Customer pays {a.case.advance_received > 0 ? "the rest of " : ""}the order<div className="text-xs text-slate-400">{a.case.customer}{a.case.advance_received > 0 && ` · ${money(a.case.advance_received, cur)} advance already received`}</div></td><td className="text-right font-medium text-emerald-700">{money(a.case.balance_due, cur, { sign: true })}</td></tr>
+                <tr className="border-t border-slate-100"><td className="py-1.5 text-slate-500">{a.case.pay_day}</td><td>{buyer ? "Income from the goods" : <>Customer pays {a.case.advance_received > 0 ? "the rest of " : ""}the order</>}<div className="text-xs text-slate-400">{a.case.customer}{a.case.advance_received > 0 && ` · ${money(a.case.advance_received, cur)} advance already received`}</div></td><td className="text-right font-medium text-emerald-700">{money(a.case.balance_due, cur, { sign: true })}</td></tr>
               </tbody>
             </table>
           </div>

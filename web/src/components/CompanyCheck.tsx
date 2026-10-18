@@ -34,7 +34,7 @@ function GoogleVerdict({ g }: { g: NonNullable<PartyView["google"]> }) {
 }
 
 /** Customer and supplier: name + email, checked by rules and (optionally) on Google by Gemini. */
-export function CompanyCheck({ refreshKey }: { refreshKey: string }) {
+export function CompanyCheck({ refreshKey, buyer = false }: { refreshKey: string; buyer?: boolean }) {
   const [v, setV] = useState<CompaniesView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -53,7 +53,7 @@ export function CompanyCheck({ refreshKey }: { refreshKey: string }) {
         <div className="grid gap-3 md:grid-cols-2">
           {v.parties.map((p) => (
             <div key={p.role} className="rounded-xl border border-slate-200 p-4">
-              <div className="label">{p.role === "supplier" ? "Supplier (you pay them)" : "Customer (they pay you)"}</div>
+              <div className="label">{p.role === "supplier" ? "Supplier (you pay them)" : buyer ? "Buyer (this is you)" : "Customer (they pay you)"}</div>
               <div className="font-bold text-slate-900">{p.company || "Name not found"}</div>
               <div className="font-mono text-xs text-slate-500">{p.email || "no email found"}</div>
               <ul className="mt-2 space-y-1">{p.rules.map((r, i) => <li key={i} className="flex gap-2 text-sm">{ICON[r.kind]}{r.text}</li>)}</ul>

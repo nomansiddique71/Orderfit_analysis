@@ -734,8 +734,8 @@ def draft_message(winner: SimulationResult, case: Case, pay_day: int,
                     f"minimum cash reserve. We would be glad to proceed if the payments can be "
                     f"spread later.")
         return (f"Subject: {ref} -- acceptance\n\n"
-                f"We accept your offer {ref} ({cur} {total:,.0f}) and will pay as per your "
-                f"schedule: " + "; ".join(f"{cur} {-m.amount:,.0f} {m.label.lower()} on day {m.day}"
+                f"We accept your offer {ref} ({amount_text(total, cur)}) and will pay as per your "
+                f"schedule: " + "; ".join(f"{amount_text(-m.amount, cur)} {m.label.lower()} on day {m.day}"
                                           for m in costs)
                 + f". Please confirm delivery by day {case.delivery_day}.")
     if p.id == "decline":
@@ -749,32 +749,32 @@ def draft_message(winner: SimulationResult, case: Case, pay_day: int,
                 + ".")
     if p.advance_pct > 0:
         return (f"Subject: {ref} -- acceptance with a {p.advance_pct * 100:.0f}% advance\n\n"
-                f"We are pleased to accept {ref} ({cur} {case.order_value:,.0f}) with one "
-                f"adjustment: an advance of {cur} "
-                f"{case.balance_due * p.advance_pct:,.0f} "
+                f"We are pleased to accept {ref} ({amount_text(case.order_value, cur)}) with one "
+                f"adjustment: an advance of "
+                f"{amount_text(case.balance_due * p.advance_pct, cur)} "
                 f"({p.advance_pct * 100:.0f}% of the "
                 f"{'remaining balance' if case.advance_received else 'order value'}) payable on order "
                 f"confirmation. This lets us commit production capacity and deliver by "
                 f"day {case.required_delivery_day}. All other terms as per your PO.")
     if not p.supplier_extension and p.financing is None:
         return (f"Subject: {ref} -- acceptance\n\n"
-                f"We accept {ref} ({cur} {case.order_value:,.0f}) as issued and will "
+                f"We accept {ref} ({amount_text(case.order_value, cur)}) as issued and will "
                 f"deliver by day {case.required_delivery_day}.")
     if p.supplier_extension and p.financing is None:
         moved = [m for m in case.order_costs if m.deferrable_to is not None]
         kept = [m for m in case.order_costs if m.deferrable_to is None]
         return (f"Subject: Payment schedule -- {case.supplier or 'supplier'}\n\n"
                 "We accept your quotation and ask to restructure the payment schedule: "
-                + "; ".join(f"the {cur} {-m.amount:,.0f} {m.label.lower()} to fall due on day "
+                + "; ".join(f"the {amount_text(-m.amount, cur)} {m.label.lower()} to fall due on day "
                             f"{m.deferrable_to}" for m in moved)
                 + (" (after the goods arrive)." if case.is_buyer
                    else " (after our customer's receivables clear).")
-                + ("".join(f" The {cur} {-m.amount:,.0f} {m.label.lower()} remains on day "
+                + ("".join(f" The {amount_text(-m.amount, cur)} {m.label.lower()} remains on day "
                            f"{m.day}." for m in kept)))
     f = p.financing
     return (f"Subject: Financing acceptance {f.id} -- {f.lender}\n\n"
-            f"We accept term sheet {f.id}: draw {cur} {f.principal:,.0f} on day "
-            f"{f.draw_day}, repay {cur} {f.principal + f.cost():,.0f} on day "
+            f"We accept term sheet {f.id}: draw {amount_text(f.principal, cur)} on day "
+            f"{f.draw_day}, repay {amount_text(f.principal + f.cost(), cur)} on day "
             f"{f.repay_day} ({f.terms_text()}). Please confirm and issue the "
             f"drawdown notice.")
 
@@ -788,7 +788,7 @@ WALK_GROUPS = {
 }
 
 
-BUYER_GROUPS = {"order_cost": "Payments to the supplier", "order_revenue": "Income from the goods"}
+BUYER_GROUPS = {"order_cost": "The supplier", "order_revenue": "Income from the goods"}
 
 
 def walk_group(case: Case, kind: str) -> str:

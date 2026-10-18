@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { BellRing, RotateCcw } from "lucide-react";
 import { ApiError, authPost, forgetCase, get, me, post, resetSession, setToken, type Analysis, type DocView, type User } from "./api";
 import { AuthScreen, ProfileModal } from "./components/Auth";
 import { ActStep } from "./components/ActStep";
+import { ApprovedPlans } from "./components/ApprovedPlans";
 import { FactsStep, type FactState } from "./components/FactsStep";
 import { HowItWorks } from "./components/HowItWorks";
 import { NeedsModal } from "./components/NeedsModal";
@@ -15,9 +16,9 @@ import { Callout, Spinner, TopProgress } from "./components/ui";
 const INTRO = [
   "Start with the order. SolvOrder needs the purchase order and what you will pay the supplier; a quote, invoice or email helps the fraud checks.",
   "SolvOrder has read your documents (with Google Gemini when it is available). Each value shows the exact text it came from. Fix anything wrong, confirm what is flagged, and clear any fraud alert.",
-  "Your cash, day by day, if you accept the order as it is, plus the recommended plan.",
+  "Your cash, day by day, if you accept the deal as it is, plus the recommended plan.",
   "SolvOrder tried every mix of customer advance, later supplier payment and loans, kept only plans that keep your reserve, and ranked them by what you care about.",
-  "Approve one plan. SolvOrder drafts the message, runs the plan in a sandbox bank and logs every step. Nothing real is sent or paid.",
+  "Approve one plan, then notify the other side: SolvOrder emails your customer (or supplier) from the approved plan, books it in a sandbox bank and files it under Approved plans. Nothing real is sent or paid.",
 ];
 
 const EMPTY: FactState = { edits: {}, payEdits: null, confirmed: new Set(), reserve: null, openingCash: null, maxFin: null };
@@ -39,12 +40,15 @@ export default function App() {
   const [choice, setChoice] = useState<Choice>(null);
   const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = still checking
   const [profileOpen, setProfileOpen] = useState(false);
+  const [page, setPage] = useState<"flow" | "approved">("flow");
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 6000); return () => clearTimeout(t); }, [toast]);
   useEffect(() => { me().then(setUser).catch(() => setUser(null)); }, []);
   const main = useRef<HTMLDivElement>(null);
 
   useEffect(() => { get<{ ai: string; gemini: boolean }>("/api/health").then((h) => setAi({ label: h.ai, gemini: h.gemini })).catch(() => setAi(null)); }, []);
 
-  const go = (i: number) => { setStep(i); setMaxStep((m) => Math.max(m, i)); main.current?.scrollTo({ top: 0, behavior: "smooth" }); };
+  const go = (i: number) => { setPage("flow"); setStep(i); setMaxStep((m) => Math.max(m, i)); main.current?.scrollTo({ top: 0, behavior: "smooth" }); };
   const setControls = (c: Partial<typeof controls>) => setControlsState((s) => ({ ...s, ...c }));
 
   const restart = useCallback((msg?: string) => {
@@ -102,18 +106,26 @@ export default function App() {
     <div className="flex h-full">
       <TopProgress />
       <Sidebar step={step} maxStep={maxStep} onStep={(i) => (i >= 2 && !analysis ? toRisk() : go(i))} ai={ai} onHowItWorks={() => setHow(true)}
-        user={user} onProfile={() => setProfileOpen(true)} />
+        user={user} onProfile={() => setProfileOpen(true)} approvedActive={page === "approved"} onApproved={() => setPage("approved")} />
       <main ref={main} className="flex-1 overflow-y-auto">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/85 px-8 py-4 backdrop-blur">
           <div className="flex items-center justify-between gap-4">
+            {page === "approved" ? (
+              <div>
+                <div className="label text-brand-700">Your records</div>
+                <h2 className="text-xl font-extrabold text-slate-900">Approved plans</h2>
+                <p className="max-w-3xl text-sm text-slate-500">Every plan you approved and notified, with the reasons, the numbers and the emails that went to your customer or supplier.</p>
+              </div>
+            ) : (
             <div>
               <div className="label text-brand-700">Step {step + 1} of 5</div>
               <h2 className="text-xl font-extrabold text-slate-900">{STEPS[step].title}</h2>
               <p className="max-w-3xl text-sm text-slate-500">{INTRO[step]}</p>
             </div>
+            )}
             <div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
               {busy && step >= 2 && <Spinner text="Updating results…" />}
-              {view && <button className="btn-secondary whitespace-nowrap" disabled={busy} onClick={() => restart()}><RotateCcw className="h-4 w-4" /> New case</button>}
+              {view && page === "flow" && <button className="btn-secondary whitespace-nowrap" disabled={busy} onClick={() => restart()}><RotateCcw className="h-4 w-4" /> New case</button>}
             </div>
           </div>
         </header>
@@ -123,6 +135,8 @@ export default function App() {
             These were not found in the documents: <b>{missing.join(", ")}</b>. Add them in the table below (or use the manual form on the first screen). SolvOrder never guesses a number.
           </Callout>}
 
+          {page === "approved" && <ApprovedPlans onBack={() => setPage("flow")} />}
+          {page === "flow" && <>
           {step === 0 && <StartStep aiOn={!!ai?.gemini} role={user.role} company={user.business} onHowItWorks={() => setHow(true)} onLoaded={(v) => { setView(v); setChoice(null); setFacts(EMPTY); setAnalysis(null); setReading(null); setMissing(null); setMaxStep(1); go(1); if (v.profile_source === "default" || v.questions > 0) setNeedsOpen(true); }} />}
           {step === 1 && view && <FactsStep view={view} setView={setView} state={facts} setState={setFacts} onNext={toRisk} analysing={busy} onOpenNeeds={() => setNeedsOpen(true)} />}
           {step === 2 && analysis && <RiskStep a={analysis} reading={reading} setReading={setReading} onNext={() => go(3)} updating={busy}
@@ -130,10 +144,18 @@ export default function App() {
           {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} updating={busy}
             choice={choice} onChoose={(c) => { setChoice(c); go(4); }} />}
           {step === 4 && analysis && <ActStep key={analysis.verdict.winner + analysis.plans[0]?.version + (choice?.id ?? "")} a={analysis} choice={choice}
-            refresh={async () => { await analyze(); }} />}
+            refresh={async () => { await analyze(); }} onSent={setToast} onOpenApproved={() => setPage("approved")} />}
           {step >= 2 && !analysis && !busy && <Callout tone="info">Go back to <b>Check the facts</b> and press <b>Analyse my cash</b>.</Callout>}
+          </>}
         </div>
       </main>
+      {toast && (
+        <div role="status" className="fixed bottom-6 right-6 z-50 flex max-w-md items-start gap-3 rounded-2xl bg-ink-950 px-5 py-4 text-sm text-white shadow-2xl">
+          <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-brand-500" />
+          <div className="flex-1">{toast}</div>
+          <button className="text-slate-400 hover:text-white" aria-label="Dismiss" onClick={() => setToast(null)}>✕</button>
+        </div>
+      )}
       {how && <HowItWorks onClose={() => setHow(false)} />}
       {profileOpen && <ProfileModal user={user} onClose={() => setProfileOpen(false)} onUser={setUser} onLogout={logout} />}
       {needsOpen && view && <NeedsModal edits={facts.edits} role={view.role} onClose={() => setNeedsOpen(false)}

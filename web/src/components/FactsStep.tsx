@@ -172,7 +172,7 @@ export function FactsStep({ view, setView, state, setState, onNext, analysing, o
         <Callout tone="success" title="No fraud or consistency problems found">Bank details, payees, amounts and terms are consistent across the documents, and no hidden instructions were found.</Callout>
       )}
 
-      <CompanyCheck refreshKey={view.facts.filter((f) => /customer_|supplier_/.test(f.key)).map((f) => f.value).join("|") + view.documents.map((d) => d.doc_id).join()} />
+      <CompanyCheck buyer={view.role === "buyer"} refreshKey={view.facts.filter((f) => /customer_|supplier_/.test(f.key)).map((f) => f.value).join("|") + view.documents.map((d) => d.doc_id).join()} />
 
       <Card className="p-6">
         <SectionTitle icon={<FileText className="h-5 w-5" />} title="What SolvOrder read from your documents"
