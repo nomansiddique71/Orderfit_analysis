@@ -15,8 +15,16 @@ It reads the purchase order, supplier quote, invoice and emails with
 deterministic fraud and consistency checks, rebuilds the business's cash
 **day by day**, compares every response (customer advance, later supplier
 payment, loans, decline) under late-payment stress, and recommends one plan.
-After the owner approves, it carries the plan out in a **sandbox** (simulated
-bank, mock outbox, mock lender portal) and logs every step.
+Every plan has a **money breakdown**: each payment in and out by day, the
+running balance, totals, profit, and plain reasons to accept or not, all from
+the engine's numbers. The owner's **company profile** says which side of a deal
+they are usually on (**seller**: a customer's order, or **buyer**: a supplier's
+offer) and the currency the business runs in (BDT, INR, USD, GBP, EUR; never
+converted). For each case SolvOrder checks the role against the documents and
+asks when they disagree. After the owner approves a plan, **Notify my customer**
+(seller) or **Notify my supplier** (buyer) emails the other side from the
+approved plan through a demo outbox, books the plan in a **sandbox** (simulated
+bank, mock lender portal), and files plan and emails under **Approved plans**.
 Synthetic data only: no real bank, lender or email is ever touched.
 
 ## How it covers the BFSI track
@@ -95,7 +103,7 @@ Never commit keys. `ORDERFIT_OFFLINE=1` forces the no-AI path (used by tests).
 
 ## Sample documents
 
-`samples/` holds four synthetic packs (regenerate with
+`samples/` holds six synthetic packs (regenerate with
 `python scripts/make_samples.py`):
 
 | Pack | Shows |
@@ -104,6 +112,8 @@ Never commit keys. `ORDERFIT_OFFLINE=1` forces the no-AI path (used by tests).
 | Changed bank details | Invoice from a look-alike domain and an "urgent" email ask for a new account → critical fraud flags; payments blocked until handled. |
 | Hidden AI instruction | A PO line tells the AI to ignore the reserve → flagged, decision unchanged. |
 | Ambiguous terms (INR) | "Net 45" with no start date (two readings), line items that don't add up, lakh amounts, cancel-anytime clause. |
+| You are the seller (BDT) | Padma Garments sells 3,000 shirts to Rupsha Fashion House. Role read from the PO (Seller: Padma); 50% advance recommended; Notify addresses the customer. |
+| You are the buyer (BDT) | Padma Garments buys fabric from Meghna Fabrics. Role read from the PO (Buyer: Padma); no customer-advance plans; the smallest safe bank loan is recommended; Notify addresses the supplier (and the lender). |
 
 ## Tests
 
@@ -145,13 +155,16 @@ interface instead.
 2. **Changed bank details** sample → *Check the facts*: bank-change and look-alike-domain flags, pressure wording, "Who are you dealing with?" (Google check).
 3. *See the cash risk*: the cash walk (today → payroll, bills, order costs → lowest point vs reserve) and the day-by-day chart.
 4. *Compare options*: switch to "Safest if paid late"; **choose a different plan** than the recommended one.
-5. *Approve & act*: approve → the messages go to the mock outbox → execute → **blocked** by the fraud flags (Blocked in the log).
-6. Back on *Check the facts*, choose "pay only the original account" / "verified by phone" → execute → ledger matches the engine; open **Inside the sandbox** and the labelled log.
-7. **Option 2**: upload `samples/clean/*.pdf` yourself → Gemini's intake pop-up asks for your cash, reserve and payroll.
+5. *Approve & notify*: approve → **Notify my customer** → confirm the email → payments **blocked** by the fraud flags (Blocked in the log); the email still goes to the demo outbox.
+6. Back on *Check the facts*, choose "pay only the original account" / "verified by phone", approve again and notify → ledger matches the engine; open **Inside the sandbox**, the labelled log and **Approved plans**.
+7. **Profile → Your company**: set the company name, *Buyer*, and *BDT*; load **You are the buyer (BDT)**; open **See the money breakdown** on any plan; approve → **Notify my supplier**.
+8. **Option 2/3**: upload `samples/clean/*.pdf` or type a deal in the manual form → the intake pop-up asks only what is missing (your cash, reserve and payroll; as a buyer, the income you expect from the goods; your role if the documents disagree with your profile).
 
 ## Limits (honest)
 
-- Synthetic data; one business profile per case; one currency per case; days are counted from order confirmation (no calendar dates).
+- Synthetic data; one business profile per case; one currency per case and no conversion (documents in another currency are flagged, not converted); days are counted from order confirmation (no calendar dates).
+- Buyer deals: the income from the goods is the owner's estimate (asked, not read from documents); a buyer's plans are supplier extension and loans (no customer to ask for an advance).
+- Notify sends to a demo outbox only; no real email is delivered. Approved plans live in server memory with the demo account.
 - Sessions and demo accounts live in server memory (no database): a restart clears them. The browser replays the current case after a restart, but accounts must sign up again. The demo login gates the UI; the analysis API itself is session-based, not account-based.
 - The sample companies are invented, so the Google check reports "no public record" for them (as it should); its value shows on real names.
 - Without Gemini, the parser only understands the sample "Label: value" layout; other documents need Gemini or manual entry. Scanned PDFs need Gemini and owner confirmation.
