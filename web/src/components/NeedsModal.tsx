@@ -98,7 +98,10 @@ export function NeedsModal({ edits, role, onClose, onSaved, onView }: {
 
   async function useExample() {
     setSaving("example"); setErr(null);
-    try { onSaved(await post<DocView>("/api/profile", { use_example: true }), {}); }
+    try {
+      if (Object.keys(rates).length) await post<DocView>("/api/fx", { rates });
+      onSaved(await post<DocView>("/api/profile", { use_example: true }), {});
+    }
     catch (e) { setErr((e as Error).message); } finally { setSaving(null); }
   }
 

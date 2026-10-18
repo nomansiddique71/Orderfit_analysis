@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BellRing, RotateCcw } from "lucide-react";
 import { ApiError, authPost, forgetCase, get, me, post, resetSession, setToken, type Analysis, type DocView, type User } from "./api";
 import { AuthScreen, ProfileModal } from "./components/Auth";
-import { ActStep } from "./components/ActStep";
+import { ActStep, DeclineStep } from "./components/ActStep";
 import { ApprovedPlans } from "./components/ApprovedPlans";
 import { FactsStep, type FactState } from "./components/FactsStep";
 import { HowItWorks } from "./components/HowItWorks";
@@ -18,7 +18,7 @@ const INTRO = [
   "SolvOrder has read your documents (with Google Gemini when it is available). Each value shows the exact text it came from. Fix anything wrong, confirm what is flagged, and clear any fraud alert.",
   "Your cash, day by day, if you accept the deal as it is, plus the recommended plan.",
   "SolvOrder tried every mix of customer advance, later supplier payment and loans, kept only plans that keep your reserve, and ranked them by what you care about.",
-  "Approve one plan, then notify the other side: SolvOrder emails your customer (or supplier) from the approved plan, books it in a sandbox bank and files it under Approved plans. Nothing real is sent or paid.",
+  "Approve one plan and notify the other side, or, when no plan keeps your reserve, decline politely: SolvOrder writes the email to your customer (or supplier), books an approved plan in a sandbox bank and files every decision under Approved / declined plans. Nothing real is sent or paid.",
 ];
 
 const EMPTY: FactState = { edits: {}, payEdits: null, confirmed: new Set(), reserve: null, openingCash: null, maxFin: null };
@@ -113,8 +113,8 @@ export default function App() {
             {page === "approved" ? (
               <div>
                 <div className="label text-brand-700">Your records</div>
-                <h2 className="text-xl font-extrabold text-slate-900">Approved plans</h2>
-                <p className="max-w-3xl text-sm text-slate-500">Every plan you approved and notified, with the reasons, the numbers and the emails that went to your customer or supplier.</p>
+                <h2 className="text-xl font-extrabold text-slate-900">Approved / declined plans</h2>
+                <p className="max-w-3xl text-sm text-slate-500">Every plan you approved and every deal you declined, with the reasons, the numbers and the emails that went to your customer or supplier.</p>
               </div>
             ) : (
             <div>
@@ -143,7 +143,8 @@ export default function App() {
             onConfirm={(k) => setFacts((f) => ({ ...f, confirmed: new Set([...f.confirmed, k]) }))} />}
           {step === 3 && analysis && <OptionsStep a={analysis} controls={controls} setControls={setControls} onNext={() => go(4)} updating={busy}
             choice={choice} onChoose={(c) => { setChoice(c); go(4); }} />}
-          {step === 4 && analysis && <ActStep key={analysis.verdict.winner + analysis.plans[0]?.version + (choice?.id ?? "")} a={analysis} choice={choice}
+          {step === 4 && analysis && analysis.verdict.winner === "decline" && <DeclineStep key={analysis.plans[0]?.version} a={analysis} onSent={setToast} onOpenApproved={() => setPage("approved")} />}
+          {step === 4 && analysis && analysis.verdict.winner !== "decline" && <ActStep key={analysis.verdict.winner + analysis.plans[0]?.version + (choice?.id ?? "")} a={analysis} choice={choice}
             refresh={async () => { await analyze(); }} onSent={setToast} onOpenApproved={() => setPage("approved")} />}
           {step >= 2 && !analysis && !busy && <Callout tone="info">Go back to <b>Check the facts</b> and press <b>Analyse my cash</b>.</Callout>}
           </>}

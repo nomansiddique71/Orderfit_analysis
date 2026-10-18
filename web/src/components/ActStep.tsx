@@ -16,9 +16,9 @@ function notifyLabel(a: Analysis, drafts: { party?: string; to_name: string }[] 
   return `Notify my ${who}${first ? ` (${first.to_name})` : ""}${others.length ? ` + ${others.join(" + ")}` : ""}`;
 }
 
-function NotifyModal({ a, drafts, busy, onSend, onClose }: {
+function NotifyModal({ a, drafts, busy, onSend, onClose, title, intro }: {
   a: Analysis; drafts: { to: string; to_name: string; subject: string; body: string; source: string }[];
-  busy: boolean; onSend: () => void; onClose: () => void;
+  busy: boolean; onSend: () => void; onClose: () => void; title?: string; intro?: string;
 }) {
   const who = a.case.role === "buyer" ? "supplier" : "customer";
   return (
@@ -28,8 +28,8 @@ function NotifyModal({ a, drafts, busy, onSend, onClose }: {
           <div className="flex gap-3">
             <div className="rounded-xl bg-brand-50 p-2 text-brand-700"><BellRing className="h-5 w-5" /></div>
             <div>
-              <h3 className="text-lg font-bold text-slate-900">Notify your {who} by mail?</h3>
-              <p className="text-sm text-slate-500">SolvOrder wrote {drafts.length === 1 ? "this email" : `these ${drafts.length} emails`} from the plan you approved. Sending also books the plan in the sandbox bank and files it under Approved plans.</p>
+              <h3 className="text-lg font-bold text-slate-900">{title ?? `Notify your ${who} by mail?`}</h3>
+              <p className="text-sm text-slate-500">{intro ?? `SolvOrder wrote ${drafts.length === 1 ? "this email" : `these ${drafts.length} emails`} from the plan you approved. Sending also books the plan in the sandbox bank and files it under Approved / declined plans.`}</p>
             </div>
           </div>
           <button className="text-slate-400 hover:text-slate-700" aria-label="Close" onClick={onClose}><X className="h-5 w-5" /></button>
@@ -110,13 +110,13 @@ export function ActStep({ a, refresh, choice, onSent, onOpenApproved }: {
   return (
     <div className="space-y-6">
       <BusyOverlay show={busy === "notify"} title="Notifying and booking the approved plan"
-        steps={["Sending the emails to the demo outbox", "Checking your approval and the fraud gate", "Booking payments in the simulated bank", "Filing the plan under Approved plans"]} />
+        steps={["Sending the emails to the demo outbox", "Checking your approval and the fraud gate", "Booking payments in the simulated bank", "Filing the plan under Approved / declined plans"]} />
       {notifyOpen && drafts && <NotifyModal a={a} drafts={drafts} busy={busy === "notify"} onClose={() => setNotifyOpen(false)}
         onSend={() => act("notify", () => post<{ approval: Approval; executed: Execution; record: ApprovedRecord }>("/api/notify", { polished: !!drafts?.some((d) => d.source === "gemini") }),
           async (r) => {
             setApproval(r.approval); setExec(r.executed); setRecord(r.record); setNotifyOpen(false);
             const sent = r.approval.messages.filter((m) => m.sent).map((m) => m.to_name);
-            onSent(sent.length ? `Email sent to ${sent.join(", ")} (demo outbox). Saved under Approved plans.` : "No email could be sent: see the approval card.");
+            onSent(sent.length ? `Email sent to ${sent.join(", ")} (demo outbox). Saved under Approved / declined plans.` : "No email could be sent: see the approval card.");
             await refresh();
           })} />}
       {bd && <BreakdownModal planId={draftPlan} title={planTitle(a.plans.find((p) => p.id === draftPlan)!, cur)} cur={cur} onClose={() => setBd(false)} />}
@@ -208,7 +208,7 @@ export function ActStep({ a, refresh, choice, onSent, onOpenApproved }: {
                   <BellRing className="h-4 w-4" /> {notifyLabel(a, drafts)}
                 </LoadingButton>
               ) : (
-                <button className="btn-secondary mt-3 w-full" onClick={onOpenApproved}>Open Approved plans{record ? ` (${record.id})` : ""}</button>
+                <button className="btn-secondary mt-3 w-full" onClick={onOpenApproved}>Open Approved / declined plans{record ? ` (${record.id})` : ""}</button>
               )}
             </div>
           )}
@@ -251,6 +251,73 @@ export function ActStep({ a, refresh, choice, onSent, onOpenApproved }: {
         </Card>
         <OperationLog log={log} loading={logLoading} onOpenSandbox={openSandbox} />
       </div>
+    </div>
+  );
+}
+
+/** No way of accepting keeps the reserve: send the polite, justified decline and file it. */
+export function DeclineStep({ a, onSent, onOpenApproved }: { a: Analysis; onSent: (text: string) => void; onOpenApproved: () => void }) {
+  const cur = a.case.currency;
+  const who = a.case.role === "buyer" ? "supplier" : "customer";
+  type Draft = { body: string; to: string; to_name: string; subject: string; source: string; note?: string };
+  const [drafts, setDrafts] = useState<Draft[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<ApprovedRecord | null>(null);
+  const [bd, setBd] = useState(false);
+  useEffect(() => {
+    post<{ messages: Draft[] }>("/api/draft", { plan_id: "decline" })
+      .then((d) => setDrafts(d.messages.map((m) => ({ ...m, source: "engine" })))).catch((e) => setErr((e as Error).message));
+  }, []);
+  async function act<T>(label: string, fn: () => Promise<T>, then: (r: T) => void) {
+    setBusy(label); setErr(null);
+    try { then(await fn()); } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+  }
+  const declinePlan = a.plans.find((p) => p.id === "decline")!;
+  return (
+    <div className="space-y-6">
+      {bd && <BreakdownModal planId="decline" title={planTitle(declinePlan, cur)} cur={cur} onClose={() => setBd(false)} />}
+      {open && drafts && (
+        <NotifyModal a={a} drafts={drafts} busy={busy === "send"} title={`Decline politely and tell your ${who}?`}
+          intro="SolvOrder wrote this email from the engine's numbers: why the deal cannot work for your cash and, if one exists, the change that would let you accept. Sending files it under Approved / declined plans. No payment is booked."
+          onClose={() => setOpen(false)}
+          onSend={() => act("send", () => post<{ approval: Approval; record: ApprovedRecord }>("/api/decline", { polished: !!drafts.some((d) => d.source === "gemini") }),
+            (r) => { setDone(r.record); setOpen(false); onSent(`Decline sent to ${r.record.counterparty} (demo outbox). Saved under Approved / declined plans.`); })} />
+      )}
+      <Callout tone="warning" title={`Recommended: decline the ${a.case.deal}`}>
+        No way of accepting keeps your cash above your {money(a.case.reserve, cur)} reserve, so SolvOrder recommends a polite no, with the reasons.
+        <button className="ml-2 font-semibold text-brand-700 underline" onClick={() => setBd(true)}>See the full breakdown</button>
+      </Callout>
+      <Card className="p-6">
+        <SectionTitle icon={<Mail className="h-5 w-5" />} title={`Your decline to the ${who}`} sub="Drafted from the engine's numbers. Gemini may reword it, never change a figure." />
+        {!drafts && !err && <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Writing the email…</div>}
+        {drafts?.map((d, i) => (
+          <div key={i} className="rounded-xl border border-slate-200">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+              <span>To: <b className="text-slate-700">{d.to_name}</b> &lt;{d.to}&gt;</span>
+              {d.source === "gemini" && <Pill tone="green">Gemini-polished · numbers verified</Pill>}
+            </div>
+            <pre className="whitespace-pre-wrap p-3 font-sans text-sm text-slate-800">{d.body}</pre>
+          </div>
+        ))}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          {!done ? <>
+            <LoadingButton className="btn-secondary" loading={busy === "polish"} loadingText="Gemini is polishing…" disabled={!!busy || !drafts}
+              onClick={() => act("polish", () => post<{ text: string; source: string; note: string }>("/api/ai/polish", { plan_id: "decline", index: 0 }),
+                (r) => setDrafts((drafts ?? []).map((d, i) => i === 0 ? { ...d, body: r.text, source: r.source, note: r.note } : d)))}>
+              <Sparkles className="h-4 w-4" /> Polish with Gemini
+            </LoadingButton>
+            <button className="btn-danger" disabled={!!busy || !drafts} onClick={() => setOpen(true)}>
+              <Send className="h-4 w-4" /> Decline and notify my {who}{drafts?.[0] ? ` (${drafts[0].to_name})` : ""}
+            </button>
+          </> : <>
+            <Pill tone="green"><CheckCircle2 className="h-3 w-3" /> Sent to {done.counterparty} · {done.id}</Pill>
+            <button className="btn-secondary" onClick={onOpenApproved}>Open Approved / declined plans</button>
+          </>}
+        </div>
+        {err && <div className="mt-3"><Callout tone="critical">{err}</Callout></div>}
+      </Card>
     </div>
   );
 }

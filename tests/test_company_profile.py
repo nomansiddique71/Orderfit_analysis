@@ -71,3 +71,16 @@ def test_anonymous_api_still_asks_for_currency():
     _manual(sid, {"order_value": "30000"})
     keys = {n["key"] for n in client.post("/api/needs", json={"session_id": sid}).json()["needs"]}
     assert "currency" in keys
+
+
+def test_business_name_comes_from_the_company_profile():
+    h, _ = _login()
+    _profile(h, business="Padma Traders", currency="BDT")
+    sid = _session()
+    client.post("/api/documents/manual", headers=h, json={
+        "session_id": sid, "facts": {"order_value": "300000", "delivery_day": "30",
+                                     "payment_terms_days": "30", "payment_terms_basis": "after_delivery"},
+        "supplier_payments": [{"label": "Deposit", "amount": "120000", "day": 0}]})
+    p = client.post("/api/profile", headers=h, json={
+        **ACME, "session_id": sid, "name": "My business", "opening_cash": 500000, "reserve": 100000})
+    assert p.json()["profile"]["name"] == "Padma Traders"

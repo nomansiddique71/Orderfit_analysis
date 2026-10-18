@@ -71,8 +71,8 @@ export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfi
           className={`mt-2 flex w-full items-center gap-3 rounded-xl border border-white/10 px-3 py-2.5 text-left transition ${approvedActive ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5"}`}>
           <span className={`grid h-7 w-7 place-items-center rounded-lg ${approvedActive ? "bg-brand-600 text-white" : "bg-white/5"}`}><FolderCheck className="h-4 w-4" /></span>
           <span className="min-w-0">
-            <span className="block text-sm font-semibold">Approved plans</span>
-            <span className="block text-[11px] text-slate-400">Plans and the emails sent</span>
+            <span className="block text-sm font-semibold">Approved / declined plans</span>
+            <span className="block text-[11px] text-slate-400">Decisions and the emails sent</span>
           </span>
         </button>
       </nav>
@@ -91,7 +91,7 @@ export function Sidebar({ step, maxStep, onStep, ai, onHowItWorks, user, onProfi
             <li><b>Check the facts.</b> Gemini reads the documents; every value shows the exact quote it came from. Fix or confirm anything marked <i>Needs your check</i>, and deal with any red fraud alert.</li>
             <li><b>See the cash risk.</b> The chart shows your balance every day if you accept as-is. Red = below your reserve.</li>
             <li><b>Compare options.</b> Customer advance, later supplier payment, a loan, or decline. Tell SolvOrder what matters most and how late the customer might pay.</li>
-            <li><b>Approve & notify.</b> Approve one plan, then press <b>Notify my customer</b> (or supplier, when you are the buyer). The email goes to the demo outbox, the payments are booked in a simulated bank, and the plan is filed under <b>Approved plans</b>. Nothing real is sent.</li>
+            <li><b>Approve & notify.</b> Approve one plan, then press <b>Notify my customer</b> (or supplier, when you are the buyer). The email goes to the demo outbox, the payments are booked in a simulated bank, and the plan is filed under <b>Approved / declined plans</b>. Nothing real is sent.</li>
           </ol>
         </Section>
         <Section title="Reading the results" icon={<Gauge className="h-4 w-4 text-brand-500" />}>

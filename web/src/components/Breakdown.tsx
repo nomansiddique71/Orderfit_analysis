@@ -24,7 +24,8 @@ export function BreakdownModal({ planId, title, cur, onClose }: { planId: string
   const [b, setB] = useState<Breakdown | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { post<Breakdown>("/api/breakdown", { plan_id: planId }).then(setB).catch((e) => setErr((e as Error).message)); }, [planId]);
-  const tone = b?.verdict === "accept" ? "success" : b?.verdict === "reject" ? "critical" : "info";
+  const tone = b?.verdict === "accept" ? "success" : b?.verdict === "reject" ? "critical" : b?.verdict === "decline" ? "warning" : "info";
+  const dec = b?.verdict === "decline";
 
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 grid place-items-center bg-ink-950/50 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -47,12 +48,12 @@ export function BreakdownModal({ planId, title, cur, onClose }: { planId: string
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
-                <div className="mb-2 flex items-center gap-2 font-bold text-emerald-800"><ThumbsUp className="h-4 w-4" /> Why you would accept</div>
+                <div className="mb-2 flex items-center gap-2 font-bold text-emerald-800"><ThumbsUp className="h-4 w-4" /> {dec ? "Why you should decline" : "Why you would accept"}</div>
                 {b.reasons_for.length === 0 && <p className="text-sm text-slate-500">No reason in favour.</p>}
                 <ul className="space-y-1.5 text-sm text-slate-800">{b.reasons_for.map((t, i) => <li key={i} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />{t}</li>)}</ul>
               </div>
               <div className="rounded-2xl border border-rose-200 bg-rose-50/40 p-4">
-                <div className="mb-2 flex items-center gap-2 font-bold text-rose-800"><ThumbsDown className="h-4 w-4" /> Why you would not</div>
+                <div className="mb-2 flex items-center gap-2 font-bold text-rose-800"><ThumbsDown className="h-4 w-4" /> {dec ? "What declining costs you" : "Why you would not"}</div>
                 {b.reasons_against.length === 0 && <p className="text-sm text-slate-500">Nothing against it.</p>}
                 <ul className="space-y-1.5 text-sm text-slate-800">{b.reasons_against.map((t, i) => <li key={i} className="flex gap-2"><XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />{t}</li>)}</ul>
               </div>

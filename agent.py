@@ -874,11 +874,21 @@ def plan_breakdown(run: "AgentRun", result: SimulationResult, pay_day: int) -> d
 
     for_, against = [], []
     tol = r.tolerance
+    if p.id == "decline" and run.no_plan_survives:
+        for_.append(f"No way of accepting this {deal} keeps your cash above your "
+                    f"{m(case.reserve)} reserve. SolvOrder tried every option:")
+        for t in decline_case(run, pay_day)["tried"]:
+            plan = "" if t["option"] == "Accept as it is" else f" ({t['best_plan'].replace('Accept: ', '')})"
+            for_.append(f"{t['option']}{plan}: {t['why']}.")
     if p.id == "decline":
         for_.append(f"Your cash is untouched by this {deal}: lowest {m(r.min_balance)} on day "
                     f"{r.min_day}, from your existing bills and payroll only.")
         if case.gross_margin > 0:
             against.append(f"You give up the {deal}'s {m(case.gross_margin)} profit.")
+        if not r.reserve_ok:
+            against.append(f"Even without this {deal}, cash falls to {m(r.min_balance)} on day "
+                           f"{r.min_day}, below your {m(case.reserve)} reserve: the shortfall comes "
+                           f"from your existing bills and payroll, so look at those too.")
         if any(x.feasible and x.plan.id != "decline" for x in run.results.values()):
             against.append(f"At least one way of accepting the {deal} keeps your reserve, so declining "
                            "is not necessary.")
@@ -935,9 +945,13 @@ def plan_breakdown(run: "AgentRun", result: SimulationResult, pay_day: int) -> d
                                            for x in moved) + ".")
         if not p.depends_on_customer_consent and not p.depends_on_supplier_consent and p.financing is None:
             for_.append("Nobody else has to agree: you can do this today.")
-    if p.id == run.winner.plan.id:
+    if p.id == run.winner.plan.id and not (p.id == "decline" and run.no_plan_survives):
         for_.insert(0, "SolvOrder recommends this plan for your priority.")
-    if p.id == "decline":
+    if p.id == "decline" and run.no_plan_survives:
+        verdict = "decline"
+        summary = (f"Recommended: decline. No way of accepting this {deal} keeps your cash above "
+                   f"the reserve.")
+    elif p.id == "decline":
         others = any(x.feasible and x.plan.id != "decline" for x in run.results.values())
         verdict = "neutral"
         summary = ("Declining keeps your cash safe, but you can also accept safely (see the other plans)."
@@ -961,3 +975,122 @@ def plan_breakdown(run: "AgentRun", result: SimulationResult, pay_day: int) -> d
                    "financing": r.financing_cost, "net": r.net_margin},
         "rows": walk["rows"],
     }
+
+
+# ------------------------------------------------------------ declining
+
+def decline_case(run: "AgentRun", pay_day: int) -> dict:
+    """Why no way of accepting works, from the engine's own runs.
+
+    tried: one line per kind of response (as-is, customer advance, paying the
+           supplier later, each lender, everything combined) with how it fails.
+    owner_changes: the smallest single changes that would make it work (for the owner).
+    ask: an engine-verified change the COUNTERPARTY could make (seller: the
+         smallest advance; buyer: moving the supplier payments to the day the
+         income arrives), or None.
+    """
+    from dataclasses import replace
+
+    case = run.case
+    cur = case.currency
+    m = lambda x: amount_text(x, cur)  # noqa: E731
+
+    def why(r: SimulationResult) -> str:
+        if r.violations:
+            return " ".join(r.violations)
+        low = (f"cash falls to {m(r.min_balance)}" if r.min_balance >= 0
+               else f"cash runs out ({m(-r.min_balance)} short)")
+        return f"{low} on day {r.min_day}, {m(case.reserve - r.min_balance)} below your {m(case.reserve)} reserve"
+
+    accept = [r for r in run.results.values() if r.plan.id != "decline"]
+    groups = [("Accept as it is", lambda r: r.plan.id == "accept-as-is")]
+    if not case.is_buyer:
+        groups.append(("Ask the customer for an advance",
+                       lambda r: r.plan.advance_pct > 0 and not r.plan.supplier_extension
+                       and r.plan.financing is None))
+    groups.append(("Ask the supplier to be paid later",
+                   lambda r: r.plan.supplier_extension and r.plan.advance_pct == 0
+                   and r.plan.financing is None))
+    for lender in dict.fromkeys(o.lender for o in case.financing_offers):
+        groups.append((f"Borrow from {lender}",
+                       lambda r, lender=lender: r.plan.financing is not None
+                       and r.plan.financing.lender == lender))
+    groups.append(("Everything combined", lambda r: True))
+    tried = []
+    for title, match in groups:
+        rs = [r for r in accept if match(r)]
+        if rs:
+            best = max(rs, key=lambda r: (not r.violations, r.min_balance))
+            tried.append({"option": title, "best_plan": best.plan.label, "why": why(best),
+                          "lender": (best.plan.financing.lender if title.startswith("Borrow") else "")})
+    ask = None
+    if case.is_buyer:
+        later = tuple(replace(c, day=max(c.day, pay_day), deferrable_to=None)
+                      for c in case.order_costs)
+        probe = engine.simulate(replace(case, order_costs=later),
+                                engine.Plan("probe", "probe", ZERO, False, None), pay_day)
+        if probe.feasible and case.order_value > 0:
+            ask = f"the payments fell due on or after day {pay_day}, when our income from the goods arrives"
+    elif run.min_advance:
+        pct = run.min_advance[0]
+        ask = (f"an advance of {pct * 100:.0f}% ({m(engine.money(case.balance_due * pct))}) "
+               f"were paid on order confirmation")
+    else:
+        adv = engine.minimum_advance(case, pay_day, [], require_robust=False)
+        if adv:
+            ask = (f"an advance of {adv[0] * 100:.0f}% ({m(engine.money(case.balance_due * adv[0]))}) "
+                   f"were paid on order confirmation")
+    return {"tried": tried, "owner_changes": run.smallest_changes, "ask": ask}
+
+
+def decline_message(run: "AgentRun", pay_day: int, business: str = "") -> str:
+    """A polite decline to the deal's counterparty, justified with engine numbers."""
+    case = run.case
+    cur = case.currency
+    m = lambda x: amount_text(x, cur)  # noqa: E731
+    d = decline_case(run, pay_day)
+    asis = run.results["accept-as-is"]
+    real_ref = case.order_ref not in ("the order", "the offer", "")
+    ref = case.order_ref if real_ref else ("your offer" if case.is_buyer else "your order")
+    sp = f" {case.order_ref}" if real_ref else ""  # "your offer Q-77" / "your offer"
+    if case.is_buyer:
+        costs = sorted(case.order_costs, key=lambda c: c.day)
+        opening = (f"Thank you for your offer{sp}. We have reviewed it carefully against our "
+                   f"cash position for the coming weeks, and we are sorry to say that we cannot "
+                   f"accept it on the current payment schedule.")
+        timing = ("Your schedule asks us to pay " + "; ".join(
+            f"{m(-c.amount)} on day {c.day}" for c in costs)
+            + (f", while the income from these goods only reaches us around day {pay_day}."
+               if case.order_value > 0 else "."))
+    else:
+        opening = (f"Thank you for your purchase order{sp}. We have reviewed it carefully "
+                   f"against our cash position for the coming weeks, and we are sorry to say "
+                   f"that we cannot accept it on the current terms.")
+        timing = (f"To deliver by day {case.required_delivery_day} we would have to pay our "
+                  f"suppliers " + m(sum((-c.amount for c in case.order_costs), ZERO))
+                  + f" before your payment of {m(case.balance_due)} reaches us on day {pay_day}.")
+    low = (f"fall to {m(asis.min_balance)}" if asis.min_balance >= 0
+           else f"run out ({m(-asis.min_balance)} short)")
+    lines = [f"Subject: {ref[0].upper() + ref[1:]} -- unable to proceed on the current terms", "", "Dear "
+             + ((case.supplier or "Supplier") if case.is_buyer else case.customer) + ",", "",
+             opening, "", timing,
+             f"In that period our cash would {low} on day {asis.min_day}, below the minimum of "
+             f"{m(case.reserve)} we keep to pay salaries and existing bills safely."]
+    # the alternatives, as the reader of the letter would say them
+    phrase = {"Ask the customer for an advance": "asking you for an advance on confirmation",
+              "Ask the supplier to be paid later": ("asking you to let us pay later" if case.is_buyer
+                                                    else "asking our supplier to let us pay later")}
+    others = [t for t in d["tried"] if t["option"] not in ("Accept as it is", "Everything combined")]
+    if others:
+        lines += ["", "Before writing to you we checked the alternatives:"]
+        lines += [f"- {phrase.get(t['option']) or 'borrowing from ' + t['lender']}: "
+                  f"{t['why'].replace('your', 'our')}" for t in others]
+    lines += [""]
+    if d["ask"]:
+        lines.append(f"We would be glad to go ahead if {d['ask']}. If that is possible for you, "
+                     f"please let us know and we will confirm straight away.")
+    else:
+        lines.append("We value working with you and hope we can do business on a future "
+                     "order with different payment terms.")
+    lines += ["", "Kind regards,", business or "Accounts team"]
+    return "\n".join(lines)

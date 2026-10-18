@@ -765,7 +765,9 @@ def set_profile(req: ProfileReq):
               for i, o in enumerate(req.offers, 1)]
     try:
         s.profile = case_builder.profile_from_json({
-            "name": req.name.strip() or (_account(s).business if _account(s) else "") or "My business",
+            # the company profile's name wins over the form's default
+            "name": ((_account(s).business.strip() if _account(s) else "")
+                     or req.name.strip() or "My business"),
             "currency": _currency(s, req.currency.strip().upper() or "USD"),
             "opening_cash": str(req.opening_cash), "reserve": str(req.reserve),
             "max_financing_cost": str(req.max_financing_cost),
@@ -940,6 +942,7 @@ def analyze(req: AnalyzeReq):
                    for o in case.financing_offers],
         "stages": [{"stage": a, "title": b, "detail": c} for a, b, c in run.stage_log],
         "draft": run.draft_message,
+        "decline": (agent.decline_case(run, pay_day) if run.winner.plan.id == "decline" else None),
         "approval": _approval_json(s),
         "executed": s.executed,
         "ai": {"label": gemini_client.backend_label(), "gemini": gemini_client.gemini_available()},
@@ -1034,6 +1037,12 @@ def _messages_for(s: Session, plan_id: str) -> list[dict]:
     if r is None:
         raise HTTPException(404, "Unknown plan")
     p = r.plan
+    if p.id == "decline":  # one polite, justified decline to the deal's counterparty
+        party = "supplier" if case.is_buyer else "customer"
+        body = agent.decline_message(run, last["pay_day"], s.profile.name if s.profile else "")
+        who, to = _recipient(s, case, party, p)
+        return [{"party": party, "to_name": who, "to": to, "body": body,
+                 "subject": body.splitlines()[0].removeprefix("Subject:").strip()}]
     if case.is_buyer:
         parts = [("supplier", replace(p, advance_pct=engine.ZERO, financing=None))]
     else:
@@ -1173,7 +1182,53 @@ def notify(req: NotifyReq, authorization: str | None = Header(default=None)):
     return {"approval": _approval_json(s), "executed": executed, "record": record}
 
 
-def _approved_record(s: Session, a, r, mails: list[dict], executed: dict) -> dict:
+class DeclineReq(BaseModel):
+    session_id: str
+    polished: bool = False
+
+
+@app.post("/api/decline")
+def decline(req: DeclineReq, authorization: str | None = Header(default=None)):
+    """When no way of accepting keeps the reserve: record the owner's decision,
+    send the polite, justified decline to the customer (seller) or supplier (buyer)
+    through the demo outbox, and file it under Approved / declined plans.
+    Nothing is booked in the sandbox bank: no money moves."""
+    s = _session(req.session_id)
+    last = _last(s)
+    run = last["run"]
+    if run.winner.plan.id != "decline":
+        raise HTTPException(409, "A safe way to accept exists, so SolvOrder does not recommend declining.")
+    r = run.results["decline"]
+    pv = last["versions"]["decline"]
+    aid = f"DEC-{hashlib.sha256(pv.encode()).hexdigest()[:6].upper()}"
+    if s.messages.get(aid):
+        raise HTTPException(409, "This decline was already sent.")
+    a = Approval(aid, pv, "decline", r.plan.label, False, "no plan keeps the reserve")
+    s.approvals[aid], s.active_approval = a, aid
+    s.log.append("request_approval", "T1", {"plan_version": pv, "plan": "decline"}, aid,
+                 f"owner declined: {r.plan.label}")
+    sent_all = []
+    for i, m in enumerate(_messages_for(s, "decline")):
+        body, source = m["body"], "engine"
+        if req.polished:
+            cached = s.ai_cache.get(("polish", last["sig"], run.winner.plan.id, f"decline#{i}"))
+            if cached and cached[1] == "gemini":
+                body, source = cached[0], "gemini"
+        sent, why = send_on_approval(a, s.approvals, s.gate, s.log, s.outbox, m["to"], m["subject"], body)
+        sent_all.append({**m, "body": body, "source": source, "sent": sent,
+                         "status": "sent to the demo outbox (nothing really delivered)" if sent
+                         else f"not sent: {why}"})
+    s.messages[aid] = sent_all
+    record = _approved_record(s, a, r, sent_all, None)
+    u = _owner(authorization) or _account(s)
+    if u is not None:
+        AUTH.add_approved(u.email, record)
+    else:
+        s.approved.insert(0, record)
+    return {"approval": _approval_json(s), "record": record}
+
+
+def _approved_record(s: Session, a, r, mails: list[dict], executed: dict | None) -> dict:
     """What the Approved plans section keeps: the plan, its key numbers, the reasons,
     the emails sent and the sandbox result."""
     last = s.last
@@ -1182,6 +1237,7 @@ def _approved_record(s: Session, a, r, mails: list[dict], executed: dict) -> dic
     primary = mails[0] if mails else {}
     return {
         "id": a.approval_id, "time": time.strftime("%d %b %Y, %H:%M"), "case": case.name,
+        "status": "declined" if r.plan.id == "decline" else "approved",
         "business": s.profile.name if s.profile else "", "role": case.role,
         "counterparty": primary.get("to_name", ""), "party": primary.get("party", ""),
         "plan_id": r.plan.id, "plan": r.plan.label, "override": a.override, "reason": a.reason,
@@ -1193,8 +1249,8 @@ def _approved_record(s: Session, a, r, mails: list[dict], executed: dict) -> dic
         "reasons_against": b["reasons_against"],
         "mails": [{k: m[k] for k in ("party", "to_name", "to", "subject", "body", "status", "sent", "source")}
                   for m in mails],
-        "sandbox": {"ok": executed["ok"], "consistency": executed["consistency"],
-                    "steps": executed["steps"]},
+        "sandbox": ({"ok": executed["ok"], "consistency": executed["consistency"],
+                     "steps": executed["steps"]} if executed else None),
     }
 
 

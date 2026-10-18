@@ -80,6 +80,7 @@ export interface Analysis {
   offers: { id: string; lender: string; principal: number; terms: string; cost: number; draw_day: number; repay_day: number; ineligible: string | null }[];
   stages: { stage: string; title: string; detail: string }[];
   draft: string;
+  decline: DeclineInfo | null; // set when no way of accepting keeps the reserve
   approval: Approval | null;
   executed: Execution | null;
   ai: { label: string; gemini: boolean };
@@ -90,7 +91,7 @@ export interface CashWalk {
   rows: { day: number; label: string; group: string; kind: string; note: string; amount: number; balance: number; below_reserve: boolean }[];
 }
 export interface Breakdown {
-  plan_id: string; plan: string; verdict: "accept" | "reject" | "neutral"; summary: string;
+  plan_id: string; plan: string; verdict: "accept" | "reject" | "neutral" | "decline"; summary: string;
   reasons_for: string[]; reasons_against: string[];
   opening: number; reserve: number; end: number; low: number; low_day: number; headroom: number;
   money_in: Record<string, number>; money_out: Record<string, number>;
@@ -103,10 +104,12 @@ export interface Approval { id: string; plan_id: string; label: string; override
 export interface ApprovedRecord {
   id: string; time: string; case: string; business: string; role: Role; counterparty: string; party: string;
   plan_id: string; plan: string; override: boolean; reason: string; currency: string; order_ref: string;
+  status: "approved" | "declined";
   numbers: { low: number; low_day: number; reserve: number; net_profit: number; financing_cost: number; opening: number };
   summary: string; reasons_for: string[]; reasons_against: string[]; mails: SentMessage[];
-  sandbox: { ok: boolean; consistency: string | null; steps: string[] };
+  sandbox: { ok: boolean; consistency: string | null; steps: string[] } | null;
 }
+export interface DeclineInfo { tried: { option: string; best_plan: string; why: string; lender: string }[]; owner_changes: string[]; ask: string | null }
 export interface Execution {
   ok: boolean; steps: string[]; consistency: string | null; override: boolean;
   ledger: { day: number; amount: string; label: string }[]; outbox: { to: string; subject: string; body: string; status: string }[];

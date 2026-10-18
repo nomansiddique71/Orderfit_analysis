@@ -45,6 +45,35 @@ function OptionCard({ p, a, best, chosen, onChoose, onBreakdown }: { p: Plan; a:
   );
 }
 
+/** No way of accepting keeps the reserve: the one recommendation is to decline, with every option's failure. */
+function DeclineCard({ a, onBreakdown, onChoose }: { a: Analysis; onBreakdown: () => void; onChoose: () => void }) {
+  const d = a.decline!;
+  const w = words(a.case.role);
+  const who = a.case.role === "buyer" ? "supplier" : "customer";
+  return (
+    <Card className="border-2 border-rose-300 p-6">
+      <div className="label text-rose-700">★ Recommended: the only safe choice</div>
+      <h3 className="mt-1 text-xl font-extrabold text-slate-900">Decline the {w.deal}</h3>
+      <p className="mt-1 text-sm text-slate-600">No way of accepting this {w.deal} keeps your cash above your {money(a.case.reserve, a.case.currency)} reserve. SolvOrder tried every option:</p>
+      <ul className="mt-3 space-y-2">
+        {d.tried.map((t) => (
+          <li key={t.option} className="flex gap-2 rounded-xl bg-rose-50 px-3 py-2 text-sm">
+            <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+            <span><b>{t.option}</b>{t.option !== "Accept as it is" && <span className="text-slate-500"> (best version: {t.best_plan.replace("Accept: ", "")})</span>}: {t.why}.</span>
+          </li>
+        ))}
+      </ul>
+      {d.ask && <Callout tone="info" title={`What would let you accept: ask your ${who}`}>The engine checked it: the {w.deal} works if {d.ask}. The decline mail offers this.</Callout>}
+      {d.owner_changes.length > 0 && <details className="mt-3 text-sm"><summary className="cursor-pointer font-semibold text-slate-700">Changes only you can make</summary>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-600">{d.owner_changes.map((c) => <li key={c}>{c}</li>)}</ul></details>}
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button className="btn-secondary" onClick={onBreakdown}><ListTree className="h-4 w-4" /> See the full breakdown</button>
+        <button className="btn-danger" onClick={onChoose}>Decline and write to my {who} <ArrowRight className="h-4 w-4" /></button>
+      </div>
+    </Card>
+  );
+}
+
 export function OptionsStep({ a, controls, setControls, onNext, updating, choice, onChoose }: {
   a: Analysis; updating: boolean; choice: Choice; onChoose: (c: Choice) => void;
   controls: { priority: string; stress: number; payDay: number | null; tie: string | null };
@@ -100,7 +129,8 @@ export function OptionsStep({ a, controls, setControls, onNext, updating, choice
       )}
       {a.verdict.priority_conflict && <Callout tone="critical" title="Your priority conflicts with every safe plan">SolvOrder will not recommend a plan that breaks your priority. Choose a different priority, or decline.</Callout>}
 
-      <section>
+      {a.decline && <DeclineCard a={a} onBreakdown={() => setBd(winner)} onChoose={() => onChoose({ id: "decline", override: false })} />}
+      <section className={a.decline ? "hidden" : ""}>
         <SectionTitle icon={<Scale className="h-5 w-5" />} title="Your options, compared" sub="SolvOrder recommends one, but the choice is yours: pick any safe plan. Every number comes from the engine's day-by-day simulation." />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <OptionCard p={winner} a={a} best chosen={choice?.id === winner.id} onChoose={() => onChoose({ id: winner.id, override: false })} onBreakdown={() => setBd(winner)} />
